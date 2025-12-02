@@ -6,7 +6,7 @@ from datetime import datetime
 from urllib.parse import quote
 import base64
 import json
-import requests  # for GitHub API
+import requests
 
 # ----------------- BASIC CONFIG -----------------
 st.set_page_config(
@@ -17,13 +17,21 @@ st.set_page_config(
 PASSWORD = "1234"
 STATUS_FILE = "tip_contact_status.xlsx"   # TIP call / WhatsApp log (month-wise sheets)
 UPLOAD_LOG_FILE = "bbm_upload_log.xlsx"   # BBM file upload log
-CURRENT_MONTH = datetime.now().strftime("%Y-%m")  # e.g. 2025-11
+CURRENT_MONTH = datetime.now().strftime("%Y-%m")  # e.g. 2025-12
 
-# ----------------- GITHUB CONFIG -----------------
-GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
-GITHUB_USERNAME = st.secrets.get("GITHUB_USERNAME", "bssr1109")
-GITHUB_REPO = st.secrets.get("GITHUB_REPO", "bsnl-tip-os-og-ig-dashboard")
-GITHUB_BRANCH = st.secrets.get("GITHUB_BRANCH", "main")
+# ----------------- GITHUB CONFIG (SAFE) -----------------
+try:
+    # Try Streamlit secrets (Cloud / local secrets.toml)
+    GITHUB_TOKEN = st.secrets["GITHUB_TOKEN"]
+    GITHUB_USERNAME = st.secrets.get("GITHUB_USERNAME", "bssr1109")
+    GITHUB_REPO = st.secrets.get("GITHUB_REPO", "bsnl-tip-os-og-ig-dashboard")
+    GITHUB_BRANCH = st.secrets.get("GITHUB_BRANCH", "main")
+except Exception:
+    # Fallback: env vars or defaults, GitHub sync will just be disabled if no token
+    GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
+    GITHUB_USERNAME = os.getenv("GITHUB_USERNAME", "bssr1109")
+    GITHUB_REPO = os.getenv("GITHUB_REPO", "bsnl-tip-os-og-ig-dashboard")
+    GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main")
 
 
 def github_upload_file(local_path: str, repo_path: str, commit_message: str):
@@ -33,7 +41,7 @@ def github_upload_file(local_path: str, repo_path: str, commit_message: str):
     - repo_path: path inside repo (e.g. 'data/tip_contact_status.xlsx')
     """
     if not GITHUB_TOKEN:
-        st.warning("GitHub token not configured – cannot sync to GitHub.")
+        # No token configured; skip GitHub sync quietly
         return
 
     if not os.path.exists(local_path):
@@ -68,10 +76,8 @@ def github_upload_file(local_path: str, repo_path: str, commit_message: str):
 
     r_put = requests.put(url, headers=headers, data=json.dumps(data))
 
-    if r_put.status_code in (200, 201):
-        st.toast(f"✅ Synced to GitHub: {repo_path}", icon="✅")
-    else:
-        st.error(f"GitHub upload failed ({r_put.status_code}): {r_put.text}")
+    if r_put.status_code not in (200, 201):
+        st.warning(f"GitHub upload failed ({r_put.status_code}): {r_put.text}")
 
 
 # ----------------- COLUMN NAMES (as per your Excels) -----------------
@@ -84,7 +90,7 @@ COL_OS_CUST_NAME = "First_Name"
 COL_OS_ADDR = "Address"
 COL_OS_AMOUNT = "OS_Amount(Rs)"
 
-# Barred Customer List (OGB_ICB_02.11.2025 (1).xlsx → OG IC Barred List)
+# Barred Customer List (OGB_ICB_02.11.2025.xlsx → OG IC Barred List)
 COL_OG_TIP_NAME = "Maintenance Fanchisee Name"
 COL_OG_BBM = "BBM"
 COL_OG_BA = "Account Number"
@@ -182,7 +188,7 @@ def save_status_all(sheets_dict):
 
     st.session_state.status_sheets = sheets_dict
 
-    # 🔁 sync to GitHub
+    # Sync to GitHub (if token configured)
     try:
         github_upload_file(
             STATUS_FILE,
@@ -206,7 +212,6 @@ def update_status(tip_name, source, account_no, update_call=False, update_whatsa
     sheets = load_status_all()
     month_str = CURRENT_MONTH
 
-    # Get the sheet for this month or create new
     if month_str in sheets:
         df = sheets[month_str].copy()
     else:
@@ -308,7 +313,6 @@ def log_upload(bbm_name, file_type, filename):
     df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
     df.to_excel(UPLOAD_LOG_FILE, index=False)
 
-    # sync to GitHub
     try:
         github_upload_file(
             UPLOAD_LOG_FILE,
@@ -371,10 +375,39 @@ with col_user:
     st.info(f"Logged in as **{st.session_state.role}** – `{st.session_state.username}`")
 
 
-# ----------------- DATA LOAD (BBM uploads) -----------------
+# ----------------- DATA LOAD (PERSIST AFTER RESTART) -----------------
 def load_data():
     role = st.session_state.role
 
+    # If session already has data, reuse it
+    if st.session_state.os_df is not None or st.session_state.og_df is not None:
+        return st.session_state.os_df, st.session_state.og_df
+
+    # On fresh restart, try to load last saved "latest" files from disk
+    os_df = None
+    og_df = None
+
+    if os.path.exists("Outstanding_latest.xlsx"):
+        try:
+            os_df = pd.read_excel("Outstanding_latest.xlsx")
+            st.session_state.os_df = os_df
+            st.session_state.os_filename = "Outstanding_latest.xlsx"
+            if not st.session_state.os_uploaded_at:
+                st.session_state.os_uploaded_at = "Loaded from last saved file"
+        except Exception as e:
+            st.warning(f"Could not read Outstanding_latest.xlsx: {e}")
+
+    if os.path.exists("Barred_latest.xlsx"):
+        try:
+            og_df = pd.read_excel("Barred_latest.xlsx")
+            st.session_state.og_df = og_df
+            st.session_state.og_filename = "Barred_latest.xlsx"
+            if not st.session_state.og_uploaded_at:
+                st.session_state.og_uploaded_at = "Loaded from last saved file"
+        except Exception as e:
+            st.warning(f"Could not read Barred_latest.xlsx: {e}")
+
+    # If BBM, show upload widgets so he can update to new month
     if role == "BBM":
         st.subheader("📥 Upload Monthly Files (BBM Only)")
 
@@ -411,7 +444,6 @@ def load_data():
 
                 log_upload(st.session_state.username, "OS", os_file.name)
 
-                # Save local copy and sync to GitHub
                 local_os_copy = "Outstanding_latest.xlsx"
                 os_df.to_excel(local_os_copy, index=False)
                 try:
@@ -451,7 +483,6 @@ def load_data():
 
                     log_upload(st.session_state.username, "OG", og_file.name)
 
-                    # Save local copy and sync to GitHub
                     local_og_copy = "Barred_latest.xlsx"
                     og_df.to_excel(local_og_copy, index=False)
                     try:
@@ -476,12 +507,12 @@ def load_data():
 
     else:
         st.subheader("📁 Data Source")
-        if st.session_state.os_df is None:
-            st.warning("Outstanding List (disconnected OS) not loaded yet. BBM must upload.")
-        if st.session_state.og_df is None:
-            st.warning("Barred Customer List (working OG/IC barred) not loaded yet. BBM must upload.")
+        if os_df is None:
+            st.warning("Outstanding List (disconnected OS) not loaded yet. BBM must upload once.")
+        if og_df is None:
+            st.warning("Barred Customer List (working OG/IC barred) not loaded yet. BBM must upload once.")
 
-    return st.session_state.os_df, st.session_state.og_df
+    return os_df, og_df
 
 
 os_df_raw, og_df_raw = load_data()
@@ -598,7 +629,7 @@ def tip_view():
         f"📄 Barred Customer List: **{st.session_state.og_filename}** "
         f"(Last updated: {st.session_state.og_uploaded_at or 'N/A'} by {st.session_state.og_uploaded_by or 'N/A'})"
     )
-    st.caption(f"🗓 Contact log month: **{CURRENT_MONTH}** ({STATUS_FILE} synced to GitHub)")
+    st.caption(f"🗓 Contact log month: **{CURRENT_MONTH}** ({STATUS_FILE})")
 
     total_os = tip_os[COL_OS_AMOUNT].sum() if not tip_os.empty else 0
     total_og = tip_og[COL_OG_AMOUNT].sum() if not tip_og.empty else 0

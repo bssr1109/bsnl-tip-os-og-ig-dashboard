@@ -164,20 +164,34 @@ if st.session_state.role == "TIP" and os_raw is not None:
 # NORMALIZE + FILTER
 # -------------------------------------------------------------
 def preprocess():
-    if os_raw is None:
+    """Normalize and filter OS / OG safely.
+    Handles cases where OG file is not uploaded or missing columns.
+    """
+    # If nothing loaded at all
+    if os_raw is None and og_raw is None:
         return pd.DataFrame(), pd.DataFrame()
 
-    osdf = os_raw.copy()
+    # Copies or empty frames
+    osdf = os_raw.copy() if os_raw is not None else pd.DataFrame()
     ogdf = og_raw.copy() if og_raw is not None else pd.DataFrame()
 
-    for df in [osdf, ogdf]:
-        for c in df.columns:
-            df[c] = df[c].astype(str)
+    # Convert all columns to string where data exists
+    for df in (osdf, ogdf):
+        if not df.empty:
+            for c in df.columns:
+                df[c] = df[c].astype(str)
 
-    osdf["TIP_STD"] = osdf["Maintanance Franchisee Name"].str.upper().str.strip()
-    osdf["BBM_STD"] = osdf["BBM"].str.upper().str.strip()
+    # ---- OS standardisation ----
+    if not osdf.empty:
+        osdf["TIP_STD"] = osdf["Maintanance Franchisee Name"].str.upper().str.strip()
+        osdf["BBM_STD"] = osdf["BBM"].str.upper().str.strip()
 
-    if not ogdf.empty:
+    # ---- OG standardisation (only if columns exist & not empty) ----
+    if (
+        not ogdf.empty
+        and "Maintenance Fanchisee Name" in ogdf.columns
+        and "BBM" in ogdf.columns
+    ):
         ogdf["TIP_STD"] = ogdf["Maintenance Fanchisee Name"].str.upper().str.strip()
         ogdf["BBM_STD"] = ogdf["BBM"].str.upper().str.strip()
 
@@ -186,13 +200,27 @@ def preprocess():
     if role == "TIP":
         tip = st.session_state.username
         bbm = st.session_state.current_bbm
-        osdf = osdf[(osdf["TIP_STD"] == tip) & (osdf["BBM_STD"] == bbm)]
-        ogdf = ogdf[(ogdf["TIP_STD"] == tip) & (ogdf["BBM_STD"] == bbm)]
+
+        if not osdf.empty and {"TIP_STD","BBM_STD"}.issubset(osdf.columns):
+            osdf = osdf[(osdf["TIP_STD"] == tip) & (osdf["BBM_STD"] == bbm)]
+
+        if not ogdf.empty and {"TIP_STD","BBM_STD"}.issubset(ogdf.columns):
+            ogdf = ogdf[(ogdf["TIP_STD"] == tip) & (ogdf["BBM_STD"] == bbm)]
+        else:
+            ogdf = pd.DataFrame()
 
     elif role == "BBM":
         bbm = st.session_state.username
-        osdf = osdf[osdf["BBM_STD"] == bbm]
-        ogdf = ogdf[ogdf["BBM_STD"] == bbm]
+
+        if not osdf.empty and "BBM_STD" in osdf.columns:
+            osdf = osdf[osdf["BBM_STD"] == bbm]
+
+        if not ogdf.empty and "BBM_STD" in ogdf.columns:
+            ogdf = ogdf[ogdf["BBM_STD"] == bbm]
+        else:
+            ogdf = pd.DataFrame()
+
+    # MGMT: no extra filter, they see all
 
     return osdf, ogdf
 

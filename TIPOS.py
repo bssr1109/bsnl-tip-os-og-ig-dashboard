@@ -244,21 +244,24 @@ def login_form():
     st.subheader("🔐 Login")
 
     if not MGMT_PASSWORD and not BBM_USERS and not TIP_USERS:
-        st.error("Login JSON files (mgmt.json, bbm_users.json, tip_users.json) not loaded. Keep them in same folder.")
+        st.error(
+            "Login JSON files (mgmt.json, bbm_users.json, tip_users.json) "
+            "not loaded. Keep them in the same folder as TIPOS.py."
+        )
         return
 
-    with st.form("login_form"):
-        st.write("Login as")
-        st.radio(
-            "",
-            ["TIP", "BBM", "MGMT"],
-            horizontal=True,
-            key="login_role",
-        )
-        role = st.session_state["login_role"]
+    # ---- VERY IMPORTANT: radio OUTSIDE form ----
+    role = st.radio(
+        "Login as",
+        ["TIP", "BBM", "MGMT"],
+        horizontal=True,
+        key="login_role",
+    )
 
+    with st.form("login_form"):
         bbm_for_tip = None
 
+        # ---------------- TIP ----------------
         if role == "TIP":
             if TIP_USERS:
                 username = st.selectbox(
@@ -282,6 +285,7 @@ def login_form():
 
             pwd_label = "Enter TIP Login Code (as per tip_users.json)"
 
+        # ---------------- BBM ----------------
         elif role == "BBM":
             if BBM_USERS:
                 username = st.selectbox(
@@ -294,6 +298,7 @@ def login_form():
 
             pwd_label = "Enter BBM Login Code (as per bbm_users.json)"
 
+        # ---------------- MGMT ----------------
         else:  # MGMT
             username = st.text_input("MGMT User ID", key="mgmt_user")
             pwd_label = "Enter Management Password (from mgmt.json)"
@@ -309,7 +314,7 @@ def login_form():
             st.error("❌ Please select / enter User ID")
             return
 
-        # ---- AUTH ----
+        # ---------- AUTH ----------
         if role == "MGMT":
             if not MGMT_PASSWORD:
                 st.error("❌ MGMT password not configured in mgmt.json")
@@ -319,7 +324,7 @@ def login_form():
                 return
 
         elif role == "BBM":
-            expected = BBM_USERS.get(u, None)
+            expected = BBM_USERS.get(u)
             if expected is None:
                 st.error("❌ BBM not found in bbm_users.json")
                 return
@@ -328,7 +333,7 @@ def login_form():
                 return
 
         elif role == "TIP":
-            expected = TIP_USERS.get(u, None)
+            expected = TIP_USERS.get(u)
             if expected is None:
                 st.error("❌ TIP not found in tip_users.json")
                 return
@@ -339,7 +344,7 @@ def login_form():
                 st.error("❌ Please select / enter your BBM")
                 return
 
-        # ---- SUCCESS: reset & set state ----
+        # ---------- SUCCESS: reset & set session ----------
         for key in list(st.session_state.keys()):
             del st.session_state[key]
 
@@ -355,7 +360,6 @@ def login_form():
         else:
             st.session_state.current_bbm = ""
 
-        st.success(f"✅ Logged in as {role}: {u}")
         st.rerun()
 
 if not st.session_state.authenticated:
@@ -740,3 +744,4 @@ elif st.session_state.role == "BBM":
     bbm_view()
 else:  # MGMT
     mgmt_view()
+

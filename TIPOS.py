@@ -100,11 +100,23 @@ if not st.session_state.authenticated:
 def handle_bbm_upload():
     st.subheader("⬆ Upload Monthly OS / OG Files (BBM Only)")
 
-    os_up = st.file_uploader("Upload OS Excel (with Total OS + PRIVATE OS)", type=["xlsx","xls"], key="up_os")
-    og_up = st.file_uploader("Upload OG/IC Excel", type=["xlsx","xls"], key="up_og")
+    # NOTE: only .xlsx is supported (openpyxl engine)
+    os_up = st.file_uploader(
+        "Upload OS Excel (with Total OS + PRIVATE OS)",
+        type=["xlsx"],
+        key="up_os",
+    )
 
+    # NOTE: only .xlsx is supported (openpyxl engine)
+    og_up = st.file_uploader(
+        "Upload OG/IC Excel",
+        type=["xlsx"],
+        key="up_og",
+    )
+
+    # ---- OS upload ----
     if os_up:
-        xls = pd.ExcelFile(os_up)
+        xls = pd.ExcelFile(os_up, engine="openpyxl")
         sheets = xls.sheet_names
 
         # auto detect 2 sheets
@@ -120,8 +132,9 @@ def handle_bbm_upload():
         st.success("OS file uploaded & merged successfully.")
         st.rerun()
 
+    # ---- OG upload ----
     if og_up:
-        xls = pd.ExcelFile(og_up)
+        xls = pd.ExcelFile(og_up, engine="openpyxl")
         sheet = xls.sheet_names[1] if len(xls.sheet_names) > 1 else xls.sheet_names[0]
         ogdf = pd.read_excel(xls, sheet)
         ogdf.to_excel("Barred_latest.xlsx", index=False)
@@ -130,7 +143,7 @@ def handle_bbm_upload():
         st.rerun()
 
 if st.session_state.role == "BBM":
-    handle_bbm_upload()
+    handle_bbm_upload()  # single call
 
 # -------------------------------------------------------------
 # LOAD OS / OG

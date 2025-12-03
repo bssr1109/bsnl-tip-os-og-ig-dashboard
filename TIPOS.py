@@ -240,6 +240,44 @@ def preprocess():
 os_df, og_df = preprocess()
 
 # -------------------------------------------------------------
+# NORMALIZED RECORDS FOR DASHBOARDS
+# -------------------------------------------------------------
+def build_records(os_df, og_df):
+    records = []
+
+    if not os_df.empty:
+        for _, r in os_df.iterrows():
+            records.append(
+                {
+                    "TIP": r.get("Maintanance Franchisee Name", "").upper(),
+                    "BBM": r.get("BBM", "").upper(),
+                    "SOURCE": "OS",
+                    "ACCOUNT": r.get("Billing_Account_Number", ""),
+                    "MOBILE": r.get("Mobile_Number", ""),
+                    "AMOUNT": r.get("OS_Amount(Rs)", "0"),
+                    "CUSTOMER": r.get("First_Name", r.get("Customer Name", "")),
+                }
+            )
+
+    if not og_df.empty:
+        for _, r in og_df.iterrows():
+            records.append(
+                {
+                    "TIP": r.get("Maintenance Fanchisee Name", "").upper(),
+                    "BBM": r.get("BBM", "").upper(),
+                    "SOURCE": "OG",
+                    "ACCOUNT": r.get("Account Number", ""),
+                    "MOBILE": r.get("Mobile Number", ""),
+                    "AMOUNT": r.get("OutStanding", "0"),
+                    "CUSTOMER": r.get("Customer Name", ""),
+                }
+            )
+
+    return pd.DataFrame(records)
+
+records_df = build_records(os_df, og_df)
+
+# -------------------------------------------------------------
 # STATUS SYSTEM
 # -------------------------------------------------------------
 STATUS_FILE = "tip_contact_status.xlsx"
@@ -275,6 +313,19 @@ def mark_status(tip, bbm, src, acc, call=False, wa=False):
         status[MONTH] = df
     save_status()
 
+
+def contacted(row):
+    df = status[MONTH]
+    match = df[
+        (df["TIP"] == row["TIP"]) &
+        (df["BBM"] == row["BBM"]) &
+        (df["SOURCE"] == row["SOURCE"]) &
+        (df["ACCOUNT"] == row["ACCOUNT"])
+    ]
+    if match.empty:
+        return False
+    return bool(match.iloc[0]["LAST_CALL"] or match.iloc[0]["LAST_WA"])
+
 # -------------------------------------------------------------
 # BADGE RENDER
 # -------------------------------------------------------------
@@ -288,58 +339,112 @@ def badge(tip, bbm, src, acc):
     return "🟧 Pending"
 
 # -------------------------------------------------------------
-# DISPLAY OS
+# DASHBOARD HELPERS
 # -------------------------------------------------------------
-if not os_df.empty:
-    st.header("📘 Outstanding (OS)")
-    for _, r in os_df.iterrows():
-        tip = r.get("Maintanance Franchisee Name", "").upper()
-        bbm = r.get("BBM", "").upper()
-        acc = r.get("Billing_Account_Number", "")
-        mob = r.get("Mobile_Number", "")
-        amt = r.get("OS_Amount(Rs)", "0")
-        nm = r.get("First_Name", r.get("Customer Name", ""))
+def render_contact_buttons(row):
+    tip = row["TIP"]
+    bbm = row["BBM"]
+    src = row["SOURCE"]
+    acc = row["ACCOUNT"]
+    mob = row["MOBILE"]
+    nm = row["CUSTOMER"]
+    amt = row["AMOUNT"]
 
-        st.markdown(f"### {acc} — ₹{amt} {badge(tip, bbm, 'OS', acc)}")
-        c1, c2, c3 = st.columns(3)
+    st.markdown(f"#### {src} — {acc} — ₹{amt} {badge(tip, bbm, src, acc)}")
+    c1, c2, c3 = st.columns(3)
 
-        if c1.button("Call Done", key=f"os_call_{acc}"):
-            mark_status(tip, bbm, "OS", acc, call=True)
-            st.rerun()
+    if c1.button("Call Done", key=f"call_{src}_{acc}"):
+        mark_status(tip, bbm, src, acc, call=True)
+        st.rerun()
 
-        if c2.button("WhatsApp Sent", key=f"os_wa_{acc}"):
-            mark_status(tip, bbm, "OS", acc, wa=True)
-            st.rerun()
+    if c2.button("WhatsApp Sent", key=f"wa_{src}_{acc}"):
+        mark_status(tip, bbm, src, acc, wa=True)
+        st.rerun()
 
-        wa_link = f"https://wa.me/91{mob}?text=Dear {nm}, your OS is ₹{amt}. Please pay soon."
-        c3.markdown(f"[📩 WhatsApp Customer]({wa_link})")
+    wa_link = f"https://wa.me/91{mob}?text=Dear {nm}, your {src} amount is ₹{amt}."
+    c3.markdown(f"[📩 WhatsApp Customer]({wa_link})")
 
-# -------------------------------------------------------------
-# DISPLAY OG
-# -------------------------------------------------------------
-if not og_df.empty:
-    st.header("📗 OG/IC Barred")
-    for _, r in og_df.iterrows():
-        tip = r.get("Maintenance Fanchisee Name", "").upper()
-        bbm = r.get("BBM", "").upper()
-        acc = r.get("Account Number", "")
-        mob = r.get("Mobile Number", "")
-        nm = r.get("Customer Name", "")
-        amt = r.get("OutStanding", "0")
 
-        st.markdown(f"### {acc} — ₹{amt} {badge(tip, bbm, 'OG', acc)}")
-        c1, c2, c3 = st.columns(3)
+def render_details(df, title="Account Details"):
+    st.subheader(title)
+    if df.empty:
+        st.info("No data available.")
+        return
 
-        if c1.button("Call Done", key=f"og_call_{acc}"):
-            mark_status(tip, bbm, "OG", acc, call=True)
-            st.rerun()
+    for _, row in df.iterrows():
+        render_contact_buttons(row)
 
-        if c2.button("WhatsApp Sent", key=f"og_wa_{acc}"):
-            mark_status(tip, bbm, "OG", acc, wa=True)
-            st.rerun()
 
-        wa_link = f"https://wa.me/91{mob}?text=Dear {nm}, your OG/IC barred amount is ₹{amt}."
-        c3.markdown(f"[📩 WhatsApp Customer]({wa_link})")
+def summary_cards(df, role):
+    st.subheader("Summary")
+    if df.empty:
+        st.info("No records to summarize.")
+        return
+
+    df = df.copy()
+    df["CONTACTED"] = df.apply(contacted, axis=1)
+
+    total_accounts = len(df)
+    contacted_accounts = df["CONTACTED"].sum()
+    pending_accounts = total_accounts - contacted_accounts
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total Accounts", total_accounts)
+    c2.metric("Contacted (Call/WA)", int(contacted_accounts))
+    c3.metric("Pending", int(pending_accounts))
+
+    group_field = "TIP" if role == "BBM" else "BBM"
+    grouped = (
+        df.groupby(group_field)
+        .agg(total=("ACCOUNT", "count"), contacted=("CONTACTED", "sum"))
+        .reset_index()
+    )
+    grouped["pending"] = grouped["total"] - grouped["contacted"]
+
+    st.dataframe(grouped.rename(columns={group_field: group_field, "pending": "Pending"}))
+
+
+def tipwise_view(df):
+    tips = sorted(df["TIP"].unique())
+    tip_choice = st.selectbox("Select TIP", tips)
+    filtered = df[df["TIP"] == tip_choice]
+    summary_cards(filtered, role="BBM")
+    render_details(filtered, title=f"Details for {tip_choice}")
+
+
+def tip_dashboard(df):
+    st.header("📊 TIP Dashboard")
+    summary_cards(df, role="TIP")
+    render_details(df, title="My Accounts")
+
+
+def bbm_dashboard(df):
+    st.header("📊 BBM Dashboard")
+    menu = st.sidebar.radio("BBM Menu", ["Summary", "TIP-wise Details"])
+    if menu == "Summary":
+        summary_cards(df, role="BBM")
+    else:
+        tipwise_view(df)
+
+
+def mgmt_dashboard(df):
+    st.header("📊 MGMT Dashboard")
+    summary_cards(df, role="MGMT")
+    render_details(df, title="All Accounts")
+
+
+if records_df.empty:
+    st.warning("No OS/OG data uploaded yet.")
+else:
+    if st.session_state.role == "TIP":
+        st.sidebar.info(f"Logged in as TIP: {st.session_state.username}")
+        tip_dashboard(records_df)
+    elif st.session_state.role == "BBM":
+        st.sidebar.info(f"Logged in as BBM: {st.session_state.username}")
+        bbm_dashboard(records_df)
+    else:
+        st.sidebar.info("Logged in as MGMT")
+        mgmt_dashboard(records_df)
 
 # -------------------------------------------------------------
 # LOGOUT

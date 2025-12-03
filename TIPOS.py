@@ -676,6 +676,9 @@ def bbm_view():
     bbm_name = st.session_state.username
     st.subheader(f"📌 BBM Dashboard – {bbm_name}")
 
+    # os_df / og_df are already filtered by current_bbm in preprocess()
+    global os_df, og_df
+
     total_os_all = os_df[COL_OS_AMOUNT].sum() if not os_df.empty else 0
     total_og_all = og_df[COL_OG_AMOUNT].sum() if not og_df.empty else 0
     total_os_cust = len(os_df)
@@ -691,14 +694,163 @@ def bbm_view():
     with c4:
         st.metric("👥 Barred Customers", total_og_cust)
 
+    # ---------- TIP-wise Summary ----------
     st.markdown("---")
-    st.markdown("### 📂 BBM Upload Log")
+    st.markdown("### 📊 TIP-wise Summary for this BBM")
+
+    if os_df.empty and og_df.empty:
+        st.info("No OS / OG data available for this BBM.")
+    else:
+        if not os_df.empty:
+            os_tip_group = os_df.groupby("TIP_NAME_STD").agg(
+                Total_OS=(COL_OS_AMOUNT, "sum"),
+                OS_Customers=(COL_OS_CUST_NAME, "count"),
+            )
+        else:
+            os_tip_group = pd.DataFrame(columns=["Total_OS", "OS_Customers"])
+
+        if not og_df.empty:
+            og_tip_group = og_df.groupby("TIP_NAME_STD").agg(
+                Total_OGIC=(COL_OG_AMOUNT, "sum"),
+                OG_Customers=(COL_OG_CUST_NAME, "count"),
+            )
+        else:
+            og_tip_group = pd.DataFrame(columns=["Total_OGIC", "OG_Customers"])
+
+        tip_summary = os_tip_group.join(og_tip_group, how="outer").fillna(0).reset_index()
+        tip_summary = tip_summary.rename(columns={
+            "TIP_NAME_STD": "TIP Name",
+            "Total_OS": "Total OS (Disconnected) ₹",
+            "Total_OGIC": "Total OG/IC Barred (Working) ₹",
+        })
+        st.dataframe(tip_summary, use_container_width=True)
+
+    # ---------- TIP Drill-down with Call / WhatsApp ----------
+    st.markdown("---")
+    st.markdown("### 📞 Call / 💬 WhatsApp – TIP-wise Customers")
+
+    if os_df.empty and og_df.empty:
+        st.info("No customer records to show.")
+    else:
+        tip_names = sorted(set(
+            os_df["TIP_NAME_STD"].dropna().tolist() +
+            og_df["TIP_NAME_STD"].dropna().tolist()
+        ))
+
+        if not tip_names:
+            st.info("No TIPs found under this BBM.")
+        else:
+            selected_tip = st.selectbox("Select TIP", tip_names)
+            view_choice = st.radio(
+                "What to show for this TIP?",
+                ["Both OS & Barred", "Only OS (Disconnected)", "Only Barred (Working OG/IC)"],
+                horizontal=True,
+            )
+
+            show_os = view_choice in ["Both OS & Barred", "Only OS (Disconnected)"]
+            show_og = view_choice in ["Both OS & Barred", "Only Barred (Working OG/IC)"]
+
+            tip_os = os_df[os_df["TIP_NAME_STD"] == selected_tip].copy()
+            tip_og = og_df[og_df["TIP_NAME_STD"] == selected_tip].copy()
+
+            # ---- OS section ----
+            if show_os:
+                st.markdown("#### 📴 Disconnected (OS) Customers")
+                status_map_os = get_status_map(selected_tip, "OS")
+
+                if tip_os.empty:
+                    st.info("No OS customers for this TIP.")
+                else:
+                    for idx, row in tip_os.iterrows():
+                        cust_name = str(row[COL_OS_CUST_NAME])
+                        addr = str(row[COL_OS_ADDR])
+                        mobile = row[COL_OS_MOBILE]
+                        amount = row[COL_OS_AMOUNT]
+                        acc_no = str(row[COL_OS_BA])
+
+                        last_call, last_wa = status_map_os.get(acc_no, ("", ""))
+
+                        green = bool(last_call or last_wa)
+                        bg = "#d4ffd4" if green else "#fff7d4"
+
+                        st.markdown(
+                            f"<div style='background:{bg};padding:8px;border-radius:6px;'>"
+                            f"<b>{cust_name}</b> | Acc: {acc_no}<br>"
+                            f"{addr}<br>"
+                            f"OS: ₹{amount:,.2f}<br>"
+                            f"{make_tel_link(mobile)}&nbsp;&nbsp;"
+                            f"{make_whatsapp_link(mobile, f'Dear {cust_name}, your BSNL FTTH outstanding is Rs {amount:.2f}. Kindly pay immediately.')}"
+                            f"<br><small>Last Call: {last_call or '-'} | Last WA: {last_wa or '-'}</small>"
+                            "</div>",
+                            unsafe_allow_html=True,
+                        )
+
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            if st.button("📞 Call Done", key=f"bbm_os_call_{selected_tip}_{idx}"):
+                                update_status(selected_tip, "OS", acc_no, update_call=True)
+                                st.rerun()
+                        with c2:
+                            if st.button("🟢 WA Sent", key=f"bbm_os_wa_{selected_tip}_{idx}"):
+                                update_status(selected_tip, "OS", acc_no, update_whatsapp=True)
+                                st.rerun()
+                        st.write("")
+
+            # ---- OG section ----
+            if show_og:
+                st.markdown("#### 📡 Working (OG/IC Barred) Customers")
+                status_map_og = get_status_map(selected_tip, "OG")
+
+                if tip_og.empty:
+                    st.info("No OG/IC barred customers for this TIP.")
+                else:
+                    for idx, row in tip_og.iterrows():
+                        cust_name = str(row[COL_OG_CUST_NAME])
+                        addr = str(row[COL_OG_ADDR])
+                        mobile = row[COL_OG_MOBILE]
+                        amount = row[COL_OG_AMOUNT]
+                        acc_no = str(row[COL_OG_BA])
+
+                        last_call, last_wa = status_map_og.get(acc_no, ("", ""))
+
+                        green = bool(last_call or last_wa)
+                        bg = "#d4ffd4" if green else "#fff7d4"
+
+                        st.markdown(
+                            f"<div style='background:{bg};padding:8px;border-radius:6px;'>"
+                            f"<b>{cust_name}</b> | Acc: {acc_no}<br>"
+                            f"{addr}<br>"
+                            f"Outstanding: ₹{amount:,.2f}<br>"
+                            f"{make_tel_link(mobile)}&nbsp;&nbsp;"
+                            f"{make_whatsapp_link(mobile, f'Dear {cust_name}, your BSNL FTTH bill is overdue. Outstanding Rs {amount:.2f}. Kindly pay immediately.')}"
+                            f"<br><small>Last Call: {last_call or '-'} | Last WA: {last_wa or '-'}</small>"
+                            "</div>",
+                            unsafe_allow_html=True,
+                        )
+
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            if st.button("📞 Call Done", key=f"bbm_og_call_{selected_tip}_{idx}"):
+                                update_status(selected_tip, "OG", acc_no, update_call=True)
+                                st.rerun()
+                        with c2:
+                            if st.button("🟢 WA Sent", key=f"bbm_og_wa_{selected_tip}_{idx}"):
+                                update_status(selected_tip, "OG", acc_no, update_whatsapp=True)
+                                st.rerun()
+                        st.write("")
+
+    # ---------- Upload Log at bottom ----------
+    st.markdown("---")
+    st.markdown("### 📁 BBM Upload Log (this BBM)")
+
     upload_df = load_upload_log()
     if upload_df.empty:
         st.info("No uploads logged yet.")
     else:
-        st.dataframe(upload_df[upload_df["BBM_STD"] == bbm_name], use_container_width=True)
-
+        st.dataframe(
+            upload_df[upload_df["BBM_STD"] == bbm_name],
+            use_container_width=True,
+        )
 # ----------------- MGMT VIEW -----------------
 def mgmt_view():
     st.subheader("🏛 Management Dashboard (All BBMs & TIPs)")
@@ -744,4 +896,5 @@ elif st.session_state.role == "BBM":
     bbm_view()
 else:  # MGMT
     mgmt_view()
+
 

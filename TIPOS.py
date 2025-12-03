@@ -4,25 +4,19 @@ import os
 import io
 from datetime import datetime
 from urllib.parse import quote
-import base64
 import json
-import requests
 
-# -------------------------------------------------
-# PAGE CONFIG
-# -------------------------------------------------
+# ----------------- BASIC CONFIG -----------------
 st.set_page_config(
     page_title="TIP Outstanding & OG/IC Barred Dashboard",
     layout="wide",
 )
 
-STATUS_FILE = "tip_contact_status.xlsx"
-UPLOAD_LOG_FILE = "bbm_upload_log.xlsx"
-CURRENT_MONTH = datetime.now().strftime("%Y-%m")
+STATUS_FILE = "tip_contact_status.xlsx"   # TIP call / WhatsApp log (month-wise sheets)
+UPLOAD_LOG_FILE = "bbm_upload_log.xlsx"   # BBM file upload log
+CURRENT_MONTH = datetime.now().strftime("%Y-%m")  # e.g. 2025-12
 
-# -------------------------------------------------
-# LOAD LOGIN JSONs
-# -------------------------------------------------
+# ----------------- LOAD LOGIN JSONS -----------------
 MGMT_PASSWORD = ""
 BBM_USERS = {}
 TIP_USERS = {}
@@ -30,32 +24,49 @@ TIP_USERS = {}
 try:
     if os.path.exists("mgmt.json"):
         with open("mgmt.json", "r", encoding="utf-8") as f:
-            MGMT_PASSWORD = str(json.load(f).get("password", "")).strip()
+            mgmt_cfg = json.load(f)
+            MGMT_PASSWORD = str(mgmt_cfg.get("password", "")).strip()
 
     if os.path.exists("bbm_users.json"):
         with open("bbm_users.json", "r", encoding="utf-8") as f:
-            BBM_USERS = json.load(f)
+            BBM_USERS = json.load(f)  # { "BBM NAME": "BBM1234", ... }
 
     if os.path.exists("tip_users.json"):
         with open("tip_users.json", "r", encoding="utf-8") as f:
-            TIP_USERS = json.load(f)
-
+            TIP_USERS = json.load(f)  # { "TIP NAME": "TIP1234", ... }
 except Exception as e:
-    st.error(f"Error loading login JSONs: {e}")
+    st.warning(f"Error loading login JSON files: {e}")
 
-# -------------------------------------------------
-# SESSION INIT
-# -------------------------------------------------
+# ----------------- COLUMN NAMES (your Excels) -----------------
+# Outstanding List (Ftth OS_25.11.2025.xlsx → Total OS + PRIVATE OS)
+COL_OS_TIP_NAME = "Maintanance Franchisee Name"
+COL_OS_BBM = "BBM"
+COL_OS_BA = "Billing_Account_Number"
+COL_OS_MOBILE = "Mobile_Number"
+COL_OS_CUST_NAME = "First_Name"
+COL_OS_ADDR = "Address"
+COL_OS_AMOUNT = "OS_Amount(Rs)"
+
+# Barred Customer List (OGB_ICB_02.11.2025.xlsx → OG IC Barred List)
+COL_OG_TIP_NAME = "Maintenance Fanchisee Name"
+COL_OG_BBM = "BBM"
+COL_OG_BA = "Account Number"
+COL_OG_MOBILE = "Mobile Number"
+COL_OG_CUST_NAME = "Customer Name"
+COL_OG_ADDR = "ADDRESS"
+COL_OG_AMOUNT = "OutStanding"
+
+# ----------------- SESSION INIT -----------------
 def init_session():
     defaults = {
         "authenticated": False,
-        "role": None,
+        "role": None,          # "TIP" or "BBM" or "MGMT"
         "username": None,
         "current_bbm": "",
         "os_df": None,
         "og_df": None,
-        "os_filename": "",
-        "og_filename": "",
+        "os_filename": "Not loaded",
+        "og_filename": "Not loaded",
         "os_uploaded_at": "",
         "og_uploaded_at": "",
         "os_uploaded_by": "",
@@ -68,22 +79,27 @@ def init_session():
 
 init_session()
 
-# -------------------------------------------------
-# ICON LINKS
-# -------------------------------------------------
-def make_tel_link(m):
-    if not m:
-        return ""
-    return f'<a href="tel:{m}">📞 {m}</a>'
+st.title("📊 TIP Outstanding & OG/IC Barred Dashboard")
 
-def make_whatsapp_link(m, msg):
-    if not m:
-        return ""
-    return f'<a href="https://wa.me/{m}?text={quote(msg)}" target="_blank">🟢 WhatsApp</a>'
+# ----------------- COMMON HELPERS -----------------
+def df_to_excel_bytes(df, sheet_name="Sheet1"):
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        df.to_excel(writer, index=False, sheet_name=sheet_name)
+    buffer.seek(0)
+    return buffer.getvalue()
 
-# -------------------------------------------------
-# STATUS ENGINE — PERMANENT STORAGE
-# -------------------------------------------------
+def make_tel_link(mobile):
+    if not mobile:
+        return ""
+    return f'<a href="tel:{mobile}">📞 {mobile}</a>'
+
+def make_whatsapp_link(mobile, message):
+    if not mobile:
+        return ""
+    return f'<a href="https://wa.me/{mobile}?text={quote(message)}" target="_blank">🟢 WhatsApp</a>'
+
+# ----------------- STATUS: LOAD / SAVE (MONTH-WISE SHEETS) -----------------
 STATUS_COLS = [
     "TIP_NAME_STD", "BBM_STD", "SOURCE", "ACCOUNT_NO",
     "LAST_CALL_TIME", "LAST_WHATSAPP_TIME", "MONTH"
@@ -92,12 +108,12 @@ STATUS_COLS = [
 def load_status_all():
     if st.session_state.status_sheets is not None:
         return st.session_state.status_sheets
-    
+
     sheets = {}
     if os.path.exists(STATUS_FILE):
-        x = pd.ExcelFile(STATUS_FILE)
-        for s in x.sheet_names:
-            df = pd.read_excel(x, sheet_name=s, dtype=str)
+        xls = pd.ExcelFile(STATUS_FILE)
+        for s in xls.sheet_names:
+            df = pd.read_excel(xls, sheet_name=s, dtype=str)
             for c in STATUS_COLS:
                 if c not in df.columns:
                     df[c] = ""
@@ -105,497 +121,622 @@ def load_status_all():
     st.session_state.status_sheets = sheets
     return sheets
 
-def save_status_all(sheets):
-    with pd.ExcelWriter(STATUS_FILE, engine="openpyxl") as w:
-        for name, df in sheets.items():
-            df.to_excel(w, sheet_name=name, index=False)
-    st.session_state.status_sheets = sheets
+def save_status_all(sheets_dict):
+    if not sheets_dict:
+        sheets_dict[CURRENT_MONTH] = pd.DataFrame(columns=STATUS_COLS)
 
-def update_status(tip, src, acc, update_call=False, update_wa=False):
+    with pd.ExcelWriter(STATUS_FILE, engine="openpyxl") as writer:
+        for sheet_name, df in sheets_dict.items():
+            for c in STATUS_COLS:
+                if c not in df.columns:
+                    df[c] = ""
+            df[STATUS_COLS].to_excel(writer, sheet_name=sheet_name, index=False)
+
+    st.session_state.status_sheets = sheets_dict
+
+def update_status(tip_name, source, account_no, update_call=False, update_whatsapp=False):
+    tip_name = str(tip_name).upper().strip()
+    account_no = str(account_no).strip()
+    source = source.upper()   # "OS" or "OG"
+    bbm_name = st.session_state.get("current_bbm", "").upper().strip()
+
     sheets = load_status_all()
-    month = CURRENT_MONTH
-    tip = tip.upper().strip()
-    bbm = st.session_state.current_bbm.upper().strip()
-    acc = str(acc)
+    month_str = CURRENT_MONTH
 
-    df = sheets.get(month, pd.DataFrame(columns=STATUS_COLS))
+    if month_str in sheets:
+        df = sheets[month_str].copy()
+        for c in STATUS_COLS:
+            if c not in df.columns:
+                df[c] = ""
+        df = df[STATUS_COLS]
+    else:
+        df = pd.DataFrame(columns=STATUS_COLS)
+
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    if not df.empty:
+        mask = (
+            (df["TIP_NAME_STD"] == tip_name) &
+            (df["BBM_STD"] == bbm_name) &
+            (df["SOURCE"] == source) &
+            (df["ACCOUNT_NO"] == account_no)
+        )
+    else:
+        mask = pd.Series(False, index=df.index)
+
+    if mask.any():
+        idx = df[mask].index[0]
+        if update_call:
+            df.at[idx, "LAST_CALL_TIME"] = now_str
+        if update_whatsapp:
+            df.at[idx, "LAST_WHATSAPP_TIME"] = now_str
+        df.at[idx, "MONTH"] = month_str
+    else:
+        new_row = {
+            "TIP_NAME_STD": tip_name,
+            "BBM_STD": bbm_name,
+            "SOURCE": source,
+            "ACCOUNT_NO": account_no,
+            "LAST_CALL_TIME": now_str if update_call else "",
+            "LAST_WHATSAPP_TIME": now_str if update_whatsapp else "",
+            "MONTH": month_str,
+        }
+        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+
+    sheets[month_str] = df
+    save_status_all(sheets)
+
+def get_status_map(tip_name, source, month_str=None):
+    if month_str is None:
+        month_str = CURRENT_MONTH
+
+    sheets = load_status_all()
+    tip_name = str(tip_name).upper().strip()
+    bbm_name = st.session_state.get("current_bbm", "").upper().strip()
+
+    if month_str not in sheets:
+        return {}
+
+    df = sheets[month_str]
+    if df.empty:
+        return {}
+
     for c in STATUS_COLS:
         if c not in df.columns:
             df[c] = ""
 
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    mask = (
-        (df["TIP_NAME_STD"] == tip) &
-        (df["BBM_STD"] == bbm) &
-        (df["SOURCE"] == src.upper()) &
-        (df["ACCOUNT_NO"] == acc)
-    )
-
-    if mask.any():
-        i = df.index[mask][0]
-        if update_call:
-            df.at[i, "LAST_CALL_TIME"] = now
-        if update_wa:
-            df.at[i, "LAST_WHATSAPP_TIME"] = now
-        df.at[i, "MONTH"] = month
-    else:
-        df = pd.concat([df, pd.DataFrame([{
-            "TIP_NAME_STD": tip,
-            "BBM_STD": bbm,
-            "SOURCE": src.upper(),
-            "ACCOUNT_NO": acc,
-            "LAST_CALL_TIME": now if update_call else "",
-            "LAST_WHATSAPP_TIME": now if update_wa else "",
-            "MONTH": month,
-        }])])
-
-    sheets[month] = df
-    save_status_all(sheets)
-
-def status_map(tip, src):
-    sheets = load_status_all()
-    df = sheets.get(CURRENT_MONTH, pd.DataFrame())
-    if df.empty:
-        return {}
-    tip = tip.upper().strip()
-    bbm = st.session_state.current_bbm.upper().strip()
-    df = df[
-        (df["TIP_NAME_STD"] == tip) &
-        (df["BBM_STD"] == bbm) &
-        (df["SOURCE"] == src.upper())
+    sub = df[
+        (df["TIP_NAME_STD"] == tip_name) &
+        (df["BBM_STD"] == bbm_name) &
+        (df["SOURCE"] == source.upper())
     ]
     m = {}
-    for _, r in df.iterrows():
-        m[str(r["ACCOUNT_NO"])] = (
-            r["LAST_CALL_TIME"], r["LAST_WHATSAPP_TIME"]
-        )
+    for _, row in sub.iterrows():
+        acc = str(row["ACCOUNT_NO"])
+        m[acc] = (row.get("LAST_CALL_TIME", ""), row.get("LAST_WHATSAPP_TIME", ""))
     return m
 
-# -------------------------------------------------
-# LOGIN FORM WITH JSON BASED AUTH + BBM DROPDOWN
-# -------------------------------------------------
+# ----------------- BBM UPLOAD LOG (PERSISTENT) -----------------
+def load_upload_log():
+    if os.path.exists(UPLOAD_LOG_FILE):
+        return pd.read_excel(UPLOAD_LOG_FILE, dtype=str)
+    else:
+        return pd.DataFrame(columns=["BBM_STD", "FILE_TYPE", "FILENAME", "UPLOADED_AT", "MONTH"])
+
+def log_upload(bbm_name, file_type, filename):
+    bbm_std = str(bbm_name).upper().strip()
+    month_str = CURRENT_MONTH
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    df = load_upload_log()
+    new_row = {
+        "BBM_STD": bbm_std,
+        "FILE_TYPE": file_type,
+        "FILENAME": filename,
+        "UPLOADED_AT": now,
+        "MONTH": month_str,
+    }
+    df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+    df.to_excel(UPLOAD_LOG_FILE, index=False)
+
+# ----------------- LOGIN -----------------
 def login_form():
     st.subheader("🔐 Login")
 
+    if not MGMT_PASSWORD and not BBM_USERS and not TIP_USERS:
+        st.error("Login JSON files (mgmt.json, bbm_users.json, tip_users.json) not loaded. Keep them in same folder.")
+        return
+
     with st.form("login_form"):
-        st.radio("Login as", ["TIP", "BBM", "MGMT"], key="login_role", horizontal=True)
+        st.write("Login as")
+        st.radio(
+            "",
+            ["TIP", "BBM", "MGMT"],
+            horizontal=True,
+            key="login_role",
+        )
         role = st.session_state["login_role"]
 
         bbm_for_tip = None
 
         if role == "TIP":
-            username = st.selectbox("Select TIP Name", sorted(TIP_USERS.keys()))
-            bbm_for_tip = st.selectbox("Select your BBM", sorted(BBM_USERS.keys()))
-            pwd = st.text_input("Enter TIP Login Code", type="password")
+            if TIP_USERS:
+                username = st.selectbox(
+                    "Select TIP Name",
+                    options=sorted(TIP_USERS.keys()),
+                    key="tip_username",
+                )
+            else:
+                username = st.text_input("TIP Name", key="tip_username")
+
+            if BBM_USERS:
+                bbm_for_tip = st.selectbox(
+                    "Select your BBM (for filtering OS / OG list)",
+                    options=sorted(BBM_USERS.keys()),
+                    key="tip_bbm",
+                )
+            else:
+                bbm_for_tip = st.text_input(
+                    "BBM Name (for filtering)", key="tip_bbm_text"
+                )
+
+            pwd_label = "Enter TIP Login Code (as per tip_users.json)"
 
         elif role == "BBM":
-            username = st.selectbox("Select BBM Name", sorted(BBM_USERS.keys()))
-            pwd = st.text_input("Enter BBM Login Code", type="password")
+            if BBM_USERS:
+                username = st.selectbox(
+                    "Select BBM Name",
+                    options=sorted(BBM_USERS.keys()),
+                    key="bbm_username",
+                )
+            else:
+                username = st.text_input("BBM Name", key="bbm_username")
 
-        else:
-            username = st.text_input("MGMT User ID")
-            pwd = st.text_input("Enter MGMT Password", type="password")
+            pwd_label = "Enter BBM Login Code (as per bbm_users.json)"
 
+        else:  # MGMT
+            username = st.text_input("MGMT User ID", key="mgmt_user")
+            pwd_label = "Enter Management Password (from mgmt.json)"
+
+        password = st.text_input(pwd_label, type="password", key="login_password")
         submitted = st.form_submit_button("Login")
 
-        if submitted:
-            u = username.strip()
+        if not submitted:
+            return
 
-            if role == "MGMT":
-                if pwd != MGMT_PASSWORD:
-                    st.error("❌ Wrong MGMT password")
-                    return
+        u = username.strip()
+        if not u:
+            st.error("❌ Please select / enter User ID")
+            return
 
-            elif role == "BBM":
-                expected = BBM_USERS.get(u)
-                if pwd != expected:
-                    st.error("❌ Invalid BBM code")
-                    return
+        # ---- AUTH ----
+        if role == "MGMT":
+            if not MGMT_PASSWORD:
+                st.error("❌ MGMT password not configured in mgmt.json")
+                return
+            if password != MGMT_PASSWORD:
+                st.error("❌ Invalid MGMT password")
+                return
 
-            elif role == "TIP":
-                expected = TIP_USERS.get(u)
-                if pwd != expected:
-                    st.error("❌ Invalid TIP code")
-                    return
+        elif role == "BBM":
+            expected = BBM_USERS.get(u, None)
+            if expected is None:
+                st.error("❌ BBM not found in bbm_users.json")
+                return
+            if password != expected:
+                st.error("❌ Invalid code for this BBM")
+                return
 
-            # SUCCESS → clear + set session
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            init_session()
+        elif role == "TIP":
+            expected = TIP_USERS.get(u, None)
+            if expected is None:
+                st.error("❌ TIP not found in tip_users.json")
+                return
+            if password != expected:
+                st.error("❌ Invalid code for this TIP")
+                return
+            if not bbm_for_tip:
+                st.error("❌ Please select / enter your BBM")
+                return
 
-            st.session_state.authenticated = True
-            st.session_state.role = role
-            st.session_state.username = u.upper()
+        # ---- SUCCESS: reset & set state ----
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
 
-            if role == "TIP":
-                st.session_state.current_bbm = bbm_for_tip.upper()
-            elif role == "BBM":
-                st.session_state.current_bbm = u.upper()
+        init_session()
+        st.session_state.authenticated = True
+        st.session_state.role = role
+        st.session_state.username = u.upper()
 
-            st.success("Login successful!")
-            st.rerun()
+        if role == "BBM":
+            st.session_state.current_bbm = st.session_state.username
+        elif role == "TIP":
+            st.session_state.current_bbm = str(bbm_for_tip).upper().strip()
+        else:
+            st.session_state.current_bbm = ""
+
+        st.success(f"✅ Logged in as {role}: {u}")
+        st.rerun()
 
 if not st.session_state.authenticated:
     login_form()
-    st.stop()
-# -------------------------------------------------
-# NORMALIZATION
-# -------------------------------------------------
-def normalize(s):
-    if not s:
-        return ""
-    return str(s).strip().upper().replace("  ", " ").replace("\n", " ")
+    if not st.session_state.authenticated:
+        st.stop()
 
+# ----------------- LOGOUT BAR -----------------
+col_logout, col_user = st.columns([1, 4])
+with col_logout:
+    if st.button("🚪 Logout"):
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        init_session()
+        st.rerun()
 
-# -------------------------------------------------
-# READ UPLOADED EXCEL
-# -------------------------------------------------
-def read_uploaded_excel(uploaded_file):
-    try:
-        df = pd.read_excel(uploaded_file, dtype=str)
-        df.columns = [normalize(c) for c in df.columns]
-        return df
-    except Exception as e:
-        st.error(f"❌ Failed to read Excel: {e}")
-        return pd.DataFrame()
+with col_user:
+    st.info(f"Logged in as **{st.session_state.role}** – `{st.session_state.username}` (BBM filter: `{st.session_state.current_bbm or 'ALL'}`)")
 
-
-# -------------------------------------------------
-# FIND CRITICAL COLUMNS IN OS FILE
-# -------------------------------------------------
-def infer_os_columns(df):
-    cname = {}
-    for c in df.columns:
-        u = c.upper()
-
-        if "ACCOUNT" in u:
-            cname["ACCOUNT_NO"] = c
-        if "FTTH" in u and "TIP" in u:
-            cname["TIP_NAME"] = c
-        if "MOBILE" in u:
-            cname["MOBILE"] = c
-        if "BBM" in u or "INCH" in u:
-            cname["BBM_NAME"] = c
-        if "CUSTOMER" in u or "NAME" in u:
-            cname["CUST_NAME"] = c
-
-    return cname
-
-
-# -------------------------------------------------
-# FIND CRITICAL COLUMNS IN OG FILE
-# -------------------------------------------------
-def infer_og_columns(df):
-    cname = {}
-    for c in df.columns:
-        u = c.upper()
-
-        if "ACCOUNT" in u or "SERVICE" in u:
-            cname["ACCOUNT_NO"] = c
-        if "TIP" in u:
-            cname["TIP_NAME"] = c
-        if "MOBILE" in u:
-            cname["MOBILE"] = c
-        if "BBM" in u or "INCH" in u:
-            cname["BBM_NAME"] = c
-        if "CUSTOMER" in u or "NAME" in u:
-            cname["CUST_NAME"] = c
-
-    return cname
-
-
-# -------------------------------------------------
-# CLEAN / STANDARDIZE OS
-# -------------------------------------------------
-def preprocess_os_df(df):
-    c = infer_os_columns(df)
-    missing = [x for x in ["ACCOUNT_NO", "TIP_NAME", "MOBILE", "BBM_NAME"] if x not in c]
-    if missing:
-        st.warning(f"Some OS columns missing → {missing}")
-
-    df2 = pd.DataFrame()
-    df2["ACCOUNT_NO"] = df[c.get("ACCOUNT_NO")] if c.get("ACCOUNT_NO") else ""
-    df2["TIP_NAME"] = df[c.get("TIP_NAME")] if c.get("TIP_NAME") else ""
-    df2["TIP_NAME_STD"] = df2["TIP_NAME"].apply(normalize)
-    df2["BBM_NAME"] = df[c.get("BBM_NAME")] if c.get("BBM_NAME") else ""
-    df2["BBM_STD"] = df2["BBM_NAME"].apply(normalize)
-    df2["MOBILE"] = df[c.get("MOBILE")] if c.get("MOBILE") else ""
-    df2["CUST_NAME"] = df[c.get("CUST_NAME")] if c.get("CUST_NAME") else ""
-    df2["SOURCE"] = "OS"
-    return df2
-
-
-# -------------------------------------------------
-# CLEAN / STANDARDIZE OG
-# -------------------------------------------------
-def preprocess_og_df(df):
-    c = infer_og_columns(df)
-    missing = [x for x in ["ACCOUNT_NO", "TIP_NAME", "MOBILE", "BBM_NAME"] if x not in c]
-    if missing:
-        st.warning(f"Some OG columns missing → {missing}")
-
-    df2 = pd.DataFrame()
-    df2["ACCOUNT_NO"] = df[c.get("ACCOUNT_NO")] if c.get("ACCOUNT_NO") else ""
-    df2["TIP_NAME"] = df[c.get("TIP_NAME")] if c.get("TIP_NAME") else ""
-    df2["TIP_NAME_STD"] = df2["TIP_NAME"].apply(normalize)
-    df2["BBM_NAME"] = df[c.get.get("BBM_NAME")] if c.get("BBM_NAME") else ""
-    df2["BBM_STD"] = df2["BBM_NAME"].apply(normalize)
-    df2["MOBILE"] = df[c.get("MOBILE")] if c.get("MOBILE") else ""
-    df2["CUST_NAME"] = df[c.get("CUST_NAME")] if c.get("CUST_NAME") else ""
-    df2["SOURCE"] = "OG"
-    return df2
-
-
-# -------------------------------------------------
-# SAVE UPLOADED FILE LOG
-# -------------------------------------------------
-def load_upload_log():
-    if os.path.exists(UPLOAD_LOG_FILE):
-        return pd.read_excel(UPLOAD_LOG_FILE)
-    return pd.DataFrame(columns=[
-        "TYPE", "FILENAME", "UPLOADED_BY", "UPLOADED_AT"
-    ])
-
-
-def append_upload_log(type_, filename, user):
-    df = load_upload_log()
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    df.loc[len(df)] = [type_, filename, user, now]
-    df.to_excel(UPLOAD_LOG_FILE, index=False)
-
-
-# -------------------------------------------------
-# BBM UPLOAD SCREEN
-# -------------------------------------------------
-def bbm_upload_screen():
+# ----------------- DATA LOAD (PERSIST AFTER RESTART) -----------------
+def load_data():
     role = st.session_state.role
-    user = st.session_state.username
 
-    st.subheader(f"📤 Upload OS / OG Files (Logged in as {user})")
+    # if already in session
+    if st.session_state.os_df is not None or st.session_state.og_df is not None:
+        return st.session_state.os_df, st.session_state.og_df
 
-    os_file = st.file_uploader("Upload OS File", type=["xlsx"], key="os_up")
-    og_file = st.file_uploader("Upload OG/IC Barred File", type=["xlsx"], key="og_up")
+    os_df = None
+    og_df = None
 
-    # ------------------ OS ------------------
-    if os_file is not None:
-        df = read_uploaded_excel(os_file)
-        if not df.empty:
-            df2 = preprocess_os_df(df)
-            st.session_state.os_df = df2
-            st.session_state.os_filename = os_file.name
-            st.session_state.os_uploaded_at = datetime.now().strftime("%Y-%m-%d %H:%M")
-            st.session_state.os_uploaded_by = user
+    if os.path.exists("Outstanding_latest.xlsx"):
+        try:
+            os_df = pd.read_excel("Outstanding_latest.xlsx")
+            st.session_state.os_df = os_df
+            st.session_state.os_filename = "Outstanding_latest.xlsx"
+            if not st.session_state.os_uploaded_at:
+                st.session_state.os_uploaded_at = "Loaded from last saved file"
+        except Exception as e:
+            st.warning(f"Could not read Outstanding_latest.xlsx: {e}")
 
-            append_upload_log("OS", os_file.name, user)
-            st.success("OS file processed & saved!")
+    if os.path.exists("Barred_latest.xlsx"):
+        try:
+            og_df = pd.read_excel("Barred_latest.xlsx")
+            st.session_state.og_df = og_df
+            st.session_state.og_filename = "Barred_latest.xlsx"
+            if not st.session_state.og_uploaded_at:
+                st.session_state.og_uploaded_at = "Loaded from last saved file"
+        except Exception as e:
+            st.warning(f"Could not read Barred_latest.xlsx: {e}")
 
-    # ------------------ OG ------------------
-    if og_file is not None:
-        df = read_uploaded_excel(og_file)
-        if not df.empty:
-            df2 = preprocess_og_df(df)
-            st.session_state.og_df = df2
-            st.session_state.og_filename = og_file.name
-            st.session_state.og_uploaded_at = datetime.now().strftime("%Y-%m-%d %H:%M")
-            st.session_state.og_uploaded_by = user
+    if role == "BBM":
+        st.subheader("📥 Upload Monthly Files (BBM Only)")
 
-            append_upload_log("OG", og_file.name, user)
-            st.success("OG file processed & saved!")
+        os_file = st.file_uploader(
+            "Upload **Outstanding List** (with 'Total OS' & 'PRIVATE OS' sheets)",
+            type=["xls", "xlsx"],
+            key="os_file",
+        )
+        og_file = st.file_uploader(
+            "Upload **Barred Customer List** (2nd sheet = OG/IC Barred List)",
+            type=["xls", "xlsx"],
+            key="og_file",
+        )
 
-    st.info("After upload → TIP users will see updated lists in real-time.")
-# -------------------------------------------------
-# TIP DASHBOARD (OUTSTANDING + OG/IC BARRED)
-# -------------------------------------------------
-def tip_dashboard():
-    st.title("📞 TIP Outstanding & OG/IC Barred Dashboard")
+        # OUTSTANDING
+        if os_file is not None:
+            try:
+                xls_os = pd.ExcelFile(os_file)
+                sheet_names = xls_os.sheet_names
+                sheet_total = "Total OS" if "Total OS" in sheet_names else sheet_names[-2]
+                sheet_private = "PRIVATE OS" if "PRIVATE OS" in sheet_names else sheet_names[-1]
 
+                df_total = pd.read_excel(xls_os, sheet_name=sheet_total)
+                df_private = pd.read_excel(xls_os, sheet_name=sheet_private)
+                os_df = pd.concat([df_total, df_private], ignore_index=True)
+
+                st.session_state.os_df = os_df
+                st.session_state.os_filename = os_file.name
+                st.session_state.os_uploaded_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+                st.session_state.os_uploaded_by = st.session_state.username
+                st.session_state.current_bbm = st.session_state.username
+
+                log_upload(st.session_state.username, "OS", os_file.name)
+
+                os_df.to_excel("Outstanding_latest.xlsx", index=False)
+                st.success(f"✅ Outstanding List loaded (sheets used: '{sheet_total}', '{sheet_private}')")
+            except Exception as e:
+                st.error(f"Error reading Outstanding List file: {e}")
+
+        # BARRED
+        if og_file is not None:
+            try:
+                xls_og = pd.ExcelFile(og_file)
+                if len(xls_og.sheet_names) < 2:
+                    st.error("Barred file must have at least 2 sheets.")
+                else:
+                    sheet_og = xls_og.sheet_names[1]
+                    og_df = pd.read_excel(xls_og, sheet_name=sheet_og)
+                    st.session_state.og_df = og_df
+                    st.session_state.og_filename = og_file.name
+                    st.session_state.og_uploaded_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+                    st.session_state.og_uploaded_by = st.session_state.username
+                    st.session_state.current_bbm = st.session_state.username
+
+                    log_upload(st.session_state.username, "OG", og_file.name)
+
+                    og_df.to_excel("Barred_latest.xlsx", index=False)
+                    st.success(f"✅ Barred Customer List loaded (sheet used: '{sheet_og}')")
+            except Exception as e:
+                st.error(f"Error reading Barred List file: {e}")
+    else:
+        st.subheader("📁 Data Source")
+        if os_df is None:
+            st.warning("Outstanding List not loaded yet. BBM must upload once.")
+        if og_df is None:
+            st.warning("Barred Customer List not loaded yet. BBM must upload once.")
+
+    return os_df, og_df
+
+os_df_raw, og_df_raw = load_data()
+
+# For TIP/BBM, need data to continue; for MGMT we can still show logs
+if os_df_raw is None and og_df_raw is None and st.session_state.role in ("TIP", "BBM"):
+    st.stop()
+
+# ----------------- PREPROCESS -----------------
+def preprocess(os_df, og_df):
+    if os_df is None:
+        df_os = pd.DataFrame(columns=[
+            COL_OS_TIP_NAME, COL_OS_BBM, COL_OS_BA,
+            COL_OS_MOBILE, COL_OS_CUST_NAME, COL_OS_ADDR, COL_OS_AMOUNT
+        ])
+    else:
+        df_os = os_df.copy()
+
+    if og_df is None:
+        df_og = pd.DataFrame(columns=[
+            COL_OG_TIP_NAME, COL_OG_BBM, COL_OG_BA,
+            COL_OG_MOBILE, COL_OG_CUST_NAME, COL_OG_ADDR, COL_OG_AMOUNT
+        ])
+    else:
+        df_og = og_df.copy()
+
+    def clean_mobile(x):
+        if pd.isna(x):
+            return ""
+        x = str(x).strip()
+        if x.endswith(".0"):
+            x = x[:-2]
+        return "".join(ch for ch in x if ch.isdigit())
+
+    if not df_os.empty:
+        df_os["TIP_NAME_STD"] = df_os[COL_OS_TIP_NAME].astype(str).str.strip().str.upper()
+        df_os["BBM_STD"] = df_os[COL_OS_BBM].astype(str).str.strip().str.upper()
+        df_os[COL_OS_MOBILE] = df_os[COL_OS_MOBILE].apply(clean_mobile)
+        df_os[COL_OS_AMOUNT] = pd.to_numeric(df_os[COL_OS_AMOUNT], errors="coerce").fillna(0)
+    else:
+        df_os["TIP_NAME_STD"] = []
+        df_os["BBM_STD"] = []
+
+    if not df_og.empty:
+        df_og["TIP_NAME_STD"] = df_og[COL_OG_TIP_NAME].astype(str).str.strip().str.upper()
+        df_og["BBM_STD"] = df_og[COL_OG_BBM].astype(str).str.strip().str.upper()
+        df_og[COL_OG_MOBILE] = df_og[COL_OG_MOBILE].apply(clean_mobile)
+        df_og[COL_OG_AMOUNT] = pd.to_numeric(df_og[COL_OG_AMOUNT], errors="coerce").fillna(0)
+    else:
+        df_og["TIP_NAME_STD"] = []
+        df_og["BBM_STD"] = []
+
+    role = st.session_state.role
+    bbm_filter = st.session_state.get("current_bbm", "").upper().strip()
+
+    if role in ("TIP", "BBM") and bbm_filter:
+        if not df_os.empty:
+            df_os = df_os[df_os["BBM_STD"] == bbm_filter]
+        if not df_og.empty:
+            df_og = df_og[df_og["BBM_STD"] == bbm_filter]
+
+    return df_os, df_og
+
+os_df, og_df = preprocess(os_df_raw, og_df_raw)
+
+# ----------------- TIP VIEW -----------------
+def tip_view():
     tip_name = st.session_state.username
-    bbm = st.session_state.current_bbm
+    bbm_name = st.session_state.current_bbm
 
-    st.info(f"Logged in as: **{tip_name}** | BBM: **{bbm}**")
+    tip_os = os_df[os_df["TIP_NAME_STD"] == tip_name].copy()
+    tip_og = og_df[og_df["TIP_NAME_STD"] == tip_name].copy()
 
-    # Get OS & OG
-    os_df = st.session_state.os_df
-    og_df = st.session_state.og_df
+    st.subheader(f"📌 TIP Dashboard – {tip_name} (BBM: {bbm_name})")
 
-    # If BBM filter selected
-    if os_df is not None:
-        os_df = os_df[os_df["TIP_NAME_STD"] == tip_name]
-        os_df = os_df[os_df["BBM_STD"] == bbm]
+    st.caption(
+        f"📄 Outstanding List: **{st.session_state.os_filename}** "
+        f"(Last updated: {st.session_state.os_uploaded_at or 'N/A'} by {st.session_state.os_uploaded_by or 'N/A'})"
+    )
+    st.caption(
+        f"📄 Barred Customer List: **{st.session_state.og_filename}** "
+        f"(Last updated: {st.session_state.og_uploaded_at or 'N/A'} by {st.session_state.og_uploaded_by or 'N/A'})"
+    )
+    st.caption(f"🗓 Contact log month: **{CURRENT_MONTH}** ({STATUS_FILE})")
 
-    if og_df is not None:
-        og_df = og_df[og_df["TIP_NAME_STD"] == tip_name]
-        og_df = og_df[og_df["BBM_STD"] == bbm]
+    total_os = tip_os[COL_OS_AMOUNT].sum() if not tip_os.empty else 0
+    total_og = tip_og[COL_OG_AMOUNT].sum() if not tip_og.empty else 0
+    total_os_customers = len(tip_os)
+    total_og_customers = len(tip_og)
 
-    tab1, tab2 = st.tabs(["📌 Outstanding List", "📌 OG / IC Barred List"])
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("💰 Total OS (Disconnected) ₹", f"{total_os:,.2f}")
+    with c2:
+        st.metric("🚫 Total OG/IC Barred (Working) ₹", f"{total_og:,.2f}")
+    with c3:
+        st.metric("👥 OS Customers", total_os_customers)
+    with c4:
+        st.metric("👥 Barred Customers (Working)", total_og_customers)
 
-    # -------------------------------------------------
-    # OUTSTANDING TAB
-    # -------------------------------------------------
-    with tab1:
-        if os_df is None or os_df.empty:
-            st.warning("No OS data uploaded by BBM.")
+    view_choice = st.radio(
+        "What to show?",
+        ["Both OS & Barred", "Only OS (Disconnected)", "Only Barred (Working OG/IC)"],
+        horizontal=True,
+    )
+    show_os = view_choice in ["Both OS & Barred", "Only OS (Disconnected)"]
+    show_og = view_choice in ["Both OS & Barred", "Only Barred (Working OG/IC)"]
+
+    # OS
+    if show_os:
+        st.markdown("---")
+        st.subheader("📴 Disconnected Customers – OS")
+        status_map_os = get_status_map(tip_name, "OS")
+
+        if tip_os.empty:
+            st.info("No disconnected OS customers for this TIP.")
         else:
-            st.subheader("Outstanding Customers")
+            for idx, row in tip_os.iterrows():
+                cust_name = str(row[COL_OS_CUST_NAME])
+                addr = str(row[COL_OS_ADDR])
+                mobile = row[COL_OS_MOBILE]
+                amount = row[COL_OS_AMOUNT]
+                acc_no = str(row[COL_OS_BA])
 
-            status_dict = status_map(tip_name, "OS")
+                last_call, last_wa = status_map_os.get(acc_no, ("", ""))
 
-            for idx, row in os_df.iterrows():
-                acc = row["ACCOUNT_NO"]
-                mobile = row["MOBILE"]
-                cust = row["CUST_NAME"]
+                green = bool(last_call or last_wa)
+                bg = "#d4ffd4" if green else "#fff7d4"
 
-                # previous contact info
-                call_time, wa_time = status_dict.get(acc, ("", ""))
-
-                # status color
-                green = (call_time != "" or wa_time != "")
-
-                with st.container():
-                    if green:
-                        st.markdown(
-                            f"<div style='background:#d4ffd4;padding:10px;border-radius:6px;'>"
-                            f"🔹 <b>{cust}</b> — {acc}<br>"
-                            f"{make_tel_link(mobile)} | {make_whatsapp_link(mobile, 'Dear Customer, your FTTH bill is pending.')}"
-                            f"<br><small>Last Call: {call_time} | WhatsApp: {wa_time}</small>"
-                            "</div>",
-                            unsafe_allow_html=True,
-                        )
-                    else:
-                        st.markdown(
-                            f"<div style='background:#fff7d4;padding:10px;border-radius:6px;'>"
-                            f"🔹 <b>{cust}</b> — {acc}<br>"
-                            f"{make_tel_link(mobile)} | {make_whatsapp_link(mobile, 'Kindly pay your BSNL FTTH bill.')}"
-                            "</div>",
-                            unsafe_allow_html=True,
-                        )
+                st.markdown(
+                    f"<div style='background:{bg};padding:8px;border-radius:6px;'>"
+                    f"<b>{cust_name}</b> | Acc: {acc_no}<br>"
+                    f"{addr}<br>"
+                    f"OS: ₹{amount:,.2f}<br>"
+                    f"{make_tel_link(mobile)}&nbsp;&nbsp;{make_whatsapp_link(mobile, f'Dear {cust_name}, your BSNL FTTH outstanding is Rs {amount:.2f}. Kindly pay immediately.')}"
+                    f"<br><small>Last Call: {last_call or '-'} | Last WA: {last_wa or '-'}</small>"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
 
                 c1, c2 = st.columns(2)
                 with c1:
-                    if st.button(f"📞 Mark Call Done {acc}", key=f"oscall_{acc}"):
-                        update_status(tip_name, "OS", acc, update_call=True)
+                    if st.button("📞 Call Done", key=f"os_call_{idx}"):
+                        update_status(tip_name, "OS", acc_no, update_call=True)
                         st.rerun()
-
                 with c2:
-                    if st.button(f"🟢 Mark WhatsApp Sent {acc}", key=f"oswa_{acc}"):
-                        update_status(tip_name, "OS", acc, update_wa=True)
+                    if st.button("🟢 WA Sent", key=f"os_wa_{idx}"):
+                        update_status(tip_name, "OS", acc_no, update_whatsapp=True)
                         st.rerun()
+                st.write("")
 
-                st.write("---")
+    # OG
+    if show_og:
+        st.markdown("---")
+        st.subheader("📡 Working Customers – OG/IC Barred")
+        status_map_og = get_status_map(tip_name, "OG")
 
-    # -------------------------------------------------
-    # OG TAB
-    # -------------------------------------------------
-    with tab2:
-        if og_df is None or og_df.empty:
-            st.warning("No OG/IC data uploaded by BBM.")
+        if tip_og.empty:
+            st.info("No OG/IC barred working customers for this TIP.")
         else:
-            st.subheader("OG/IC Barred Customers")
+            for idx, row in tip_og.iterrows():
+                cust_name = str(row[COL_OG_CUST_NAME])
+                addr = str(row[COL_OG_ADDR])
+                mobile = row[COL_OG_MOBILE]
+                amount = row[COL_OG_AMOUNT]
+                acc_no = str(row[COL_OG_BA])
 
-            status_dict = status_map(tip_name, "OG")
+                last_call, last_wa = status_map_og.get(acc_no, ("", ""))
 
-            for idx, row in og_df.iterrows():
-                acc = row["ACCOUNT_NO"]
-                mobile = row["MOBILE"]
-                cust = row["CUST_NAME"]
+                green = bool(last_call or last_wa)
+                bg = "#d4ffd4" if green else "#fff7d4"
 
-                call_time, wa_time = status_dict.get(acc, ("", ""))
-
-                green = (call_time != "" or wa_time != "")
-
-                with st.container():
-                    if green:
-                        st.markdown(
-                            f"<div style='background:#d4ffd4;padding:10px;border-radius:6px;'>"
-                            f"🔹 <b>{cust}</b> — {acc}<br>"
-                            f"{make_tel_link(mobile)} | {make_whatsapp_link(mobile, 'Your FTTH is OG/IC barred. Kindly clear dues.')}"
-                            f"<br><small>Last Call: {call_time} | WhatsApp: {wa_time}</small>"
-                            "</div>",
-                            unsafe_allow_html=True,
-                        )
-                    else:
-                        st.markdown(
-                            f"<div style='background:#fff7d4;padding:10px;border-radius:6px;'>"
-                            f"🔹 <b>{cust}</b> — {acc}<br>"
-                            f"{make_tel_link(mobile)} | {make_whatsapp_link(mobile, 'Please clear dues to resume service.')}"
-                            "</div>",
-                            unsafe_allow_html=True,
-                        )
+                st.markdown(
+                    f"<div style='background:{bg};padding:8px;border-radius:6px;'>"
+                    f"<b>{cust_name}</b> | Acc: {acc_no}<br>"
+                    f"{addr}<br>"
+                    f"Outstanding: ₹{amount:,.2f}<br>"
+                    f"{make_tel_link(mobile)}&nbsp;&nbsp;{make_whatsapp_link(mobile, f'Dear {cust_name}, your BSNL FTTH bill is overdue. Outstanding Rs {amount:.2f}. Kindly pay immediately.')}"
+                    f"<br><small>Last Call: {last_call or '-'} | Last WA: {last_wa or '-'}</small>"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
 
                 c1, c2 = st.columns(2)
                 with c1:
-                    if st.button(f"📞 Mark Call Done {acc}", key=f"ogcall_{acc}"):
-                        update_status(tip_name, "OG", acc, update_call=True)
+                    if st.button("📞 Call Done", key=f"og_call_{idx}"):
+                        update_status(tip_name, "OG", acc_no, update_call=True)
                         st.rerun()
                 with c2:
-                    if st.button(f"🟢 Mark WhatsApp Sent {acc}", key=f"ogwa_{acc}"):
-                        update_status(tip_name, "OG", acc, update_wa=True)
+                    if st.button("🟢 WA Sent", key=f"og_wa_{idx}"):
+                        update_status(tip_name, "OG", acc_no, update_whatsapp=True)
                         st.rerun()
+                st.write("")
 
-                st.write("---")
+# ----------------- BBM VIEW -----------------
+def bbm_view():
+    bbm_name = st.session_state.username
+    st.subheader(f"📌 BBM Dashboard – {bbm_name}")
 
+    total_os_all = os_df[COL_OS_AMOUNT].sum() if not os_df.empty else 0
+    total_og_all = og_df[COL_OG_AMOUNT].sum() if not og_df.empty else 0
+    total_os_cust = len(os_df)
+    total_og_cust = len(og_df)
 
-# -------------------------------------------------
-# BBM DASHBOARD (VIEW UPLOAD LOGS)
-# -------------------------------------------------
-def bbm_dashboard():
-    st.title("📊 BBM Dashboard")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("💰 Total OS (Disconnected)", f"{total_os_all:,.2f}")
+    with c2:
+        st.metric("🚫 Total OG/IC Barred (Working)", f"{total_og_all:,.2f}")
+    with c3:
+        st.metric("👥 OS Customers", total_os_cust)
+    with c4:
+        st.metric("👥 Barred Customers", total_og_cust)
 
-    log = load_upload_log()
-    if log.empty:
-        st.info("No files uploaded yet.")
+    st.markdown("---")
+    st.markdown("### 📂 BBM Upload Log")
+    upload_df = load_upload_log()
+    if upload_df.empty:
+        st.info("No uploads logged yet.")
+    else:
+        st.dataframe(upload_df[upload_df["BBM_STD"] == bbm_name], use_container_width=True)
+
+# ----------------- MGMT VIEW -----------------
+def mgmt_view():
+    st.subheader("🏛 Management Dashboard (All BBMs & TIPs)")
+    upload_df = load_upload_log()
+
+    st.markdown("### 📂 BBM File Upload Summary")
+    if upload_df.empty:
+        st.info("No BBM uploads logged yet.")
+    else:
+        st.dataframe(upload_df, use_container_width=True)
+
+    st.markdown("---")
+    st.markdown("### 📞 Global TIP Contact Summary")
+    sheets = load_status_all()
+    if not sheets:
+        st.info("No Call / WhatsApp actions recorded yet.")
         return
 
-    st.subheader("Uploaded Files Log")
-    st.dataframe(log, use_container_width=True)
+    month_list = sorted(sheets.keys())
+    selected_month = st.selectbox("Select month:", month_list, index=month_list.index(CURRENT_MONTH) if CURRENT_MONTH in month_list else len(month_list)-1)
+    df_month = sheets[selected_month].copy()
+    if df_month.empty:
+        st.info("No contacts in this month.")
+        return
 
+    df_month["has_call"] = df_month["LAST_CALL_TIME"].fillna("").ne("")
+    df_month["has_wa"] = df_month["LAST_WHATSAPP_TIME"].fillna("").ne("")
 
-# -------------------------------------------------
-# MGMT DASHBOARD
-# -------------------------------------------------
-def mgmt_dashboard():
-    st.title("🛡️ Management Dashboard")
+    bbm_summary = df_month.groupby("BBM_STD").agg(
+        TIPs=("TIP_NAME_STD", "nunique"),
+        Accounts_Contacted=("ACCOUNT_NO", "nunique"),
+        Calls_Done=("has_call", "sum"),
+        WhatsApp_Sent=("has_wa", "sum"),
+    ).reset_index().rename(columns={"BBM_STD": "BBM"})
 
-    os_df = st.session_state.os_df
-    og_df = st.session_state.og_df
-    log = load_upload_log()
+    st.markdown("#### BBM-wise Summary")
+    st.dataframe(bbm_summary, use_container_width=True)
 
-    st.subheader("📘 Latest OS Summary")
-    if os_df is None:
-        st.warning("No OS uploaded")
-    else:
-        st.dataframe(os_df.head(50))
-
-    st.subheader("📙 Latest OG Summary")
-    if og_df is None:
-        st.warning("No OG uploaded")
-    else:
-        st.dataframe(og_df.head(50))
-
-    st.subheader("📁 Upload Logs")
-    st.dataframe(log)
-
-
-# -------------------------------------------------
-# MAIN ROUTER
-# -------------------------------------------------
-def main_app():
-    role = st.session_state.role
-
-    if role == "TIP":
-        tip_dashboard()
-
-    elif role == "BBM":
-        bbm_upload_screen()
-        st.write("---")
-        bbm_dashboard()
-
-    elif role == "MGMT":
-        mgmt_dashboard()
-
-
-# -------------------------------------------------
-# RUN APP
-# -------------------------------------------------
-if st.session_state.authenticated:
-    main_app()
+# ----------------- MAIN ROLE SWITCH -----------------
+if st.session_state.role == "TIP":
+    tip_view()
+elif st.session_state.role == "BBM":
+    bbm_view()
+else:  # MGMT
+    mgmt_view()

@@ -157,18 +157,26 @@ def df_to_excel_bytes(df, sheet_name="Sheet1"):
 
 
 def make_tel_link(mobile):
+    """Clickable phone link with 📞 icon."""
     if not mobile:
         return ""
-    return f'<a href="tel:{mobile}">{mobile}</a>'
+    return f'<a href="tel:{mobile}">📞 {mobile}</a>'
 
 
 def make_whatsapp_link(mobile, message):
+    """Clickable WhatsApp link with WA-style icon."""
     if not mobile:
         return ""
-    return f'<a href="https://wa.me/{mobile}?text={quote(message)}" target="_blank">WhatsApp</a>'
+    return f'<a href="https://wa.me/{mobile}?text={quote(message)}" target="_blank">🟢 WhatsApp</a>'
 
 
 # ----------------- STATUS: LOAD / SAVE (MONTH-WISE SHEETS) -----------------
+STATUS_COLS = [
+    "TIP_NAME_STD", "BBM_STD", "SOURCE", "ACCOUNT_NO",
+    "LAST_CALL_TIME", "LAST_WHATSAPP_TIME", "MONTH"
+]
+
+
 def load_status_all():
     """
     Load all monthly sheets from STATUS_FILE into a dict:
@@ -182,7 +190,11 @@ def load_status_all():
         xls = pd.ExcelFile(STATUS_FILE)
         for s in xls.sheet_names:
             df = pd.read_excel(xls, sheet_name=s, dtype=str)
-            sheets[s] = df
+            # Ensure required columns exist
+            for c in STATUS_COLS:
+                if c not in df.columns:
+                    df[c] = ""
+            sheets[s] = df[STATUS_COLS].copy()
     else:
         sheets = {}
 
@@ -196,15 +208,16 @@ def save_status_all(sheets_dict):
     Then sync to GitHub.
     """
     if not sheets_dict:
-        empty = pd.DataFrame(columns=[
-            "TIP_NAME_STD", "BBM_STD", "SOURCE", "ACCOUNT_NO",
-            "LAST_CALL_TIME", "LAST_WHATSAPP_TIME", "MONTH"
-        ])
+        empty = pd.DataFrame(columns=STATUS_COLS)
         sheets_dict[CURRENT_MONTH] = empty
 
     with pd.ExcelWriter(STATUS_FILE, engine="openpyxl") as writer:
         for sheet_name, df in sheets_dict.items():
-            df.to_excel(writer, sheet_name=sheet_name, index=False)
+            # Ensure all columns exist
+            for c in STATUS_COLS:
+                if c not in df.columns:
+                    df[c] = ""
+            df[STATUS_COLS].to_excel(writer, sheet_name=sheet_name, index=False)
 
     st.session_state.status_sheets = sheets_dict
 
@@ -222,7 +235,7 @@ def save_status_all(sheets_dict):
 def update_status(tip_name, source, account_no, update_call=False, update_whatsapp=False):
     """
     Update ONE row per (TIP_NAME_STD, BBM_STD, SOURCE, ACCOUNT_NO) for the CURRENT_MONTH.
-    If row exists in that month's sheet, update times. Else create new row.
+    Robust even if old Excel doesn't have new columns.
     """
     tip_name = str(tip_name).upper().strip()
     account_no = str(account_no).strip()
@@ -234,11 +247,13 @@ def update_status(tip_name, source, account_no, update_call=False, update_whatsa
 
     if month_str in sheets:
         df = sheets[month_str].copy()
+        # Make sure required columns exist
+        for c in STATUS_COLS:
+            if c not in df.columns:
+                df[c] = ""
+        df = df[STATUS_COLS]
     else:
-        df = pd.DataFrame(columns=[
-            "TIP_NAME_STD", "BBM_STD", "SOURCE", "ACCOUNT_NO",
-            "LAST_CALL_TIME", "LAST_WHATSAPP_TIME", "MONTH"
-        ])
+        df = pd.DataFrame(columns=STATUS_COLS)
 
     now = datetime.now()
     now_str = now.strftime("%Y-%m-%d %H:%M")
@@ -289,11 +304,19 @@ def get_status_map(tip_name, source, month_str=None):
     tip_name = str(tip_name).upper().strip()
     bbm_name = st.session_state.get("current_bbm", "").upper().strip()
 
-    if month_str not in sheets or sheets[month_str].empty:
+    if month_str not in sheets:
         return {}
 
     df = sheets[month_str]
-    if "BBM_STD" not in df.columns:
+    if df.empty:
+        return {}
+
+    # Ensure required columns exist (old sheets safety)
+    for c in STATUS_COLS:
+        if c not in df.columns:
+            df[c] = ""
+
+    if "BBM_STD" not in df.columns or "TIP_NAME_STD" not in df.columns:
         return {}
 
     sub = df[
@@ -362,6 +385,8 @@ def login_form():
         role = st.radio("Login as", ["TIP", "BBM", "MGMT"], horizontal=True)
 
         # Role-specific username widgets
+        bbm_for_tip = None
+
         if role == "BBM":
             if BBM_USERS:
                 username = st.selectbox(
@@ -371,7 +396,9 @@ def login_form():
             else:
                 username = st.text_input("BBM Name (as in Excel)")
             pwd_label = "Enter BBM Login Code (as per bbm_users.json)"
+
         elif role == "TIP":
+            # TIP name from tip_users.json
             if TIP_USERS:
                 username = st.selectbox(
                     "Select TIP Name (as in Excel)",
@@ -379,7 +406,18 @@ def login_form():
                 )
             else:
                 username = st.text_input("TIP Name (as in Excel)")
+
+            # *** NEW: BBM selection at login for TIP ***
+            if BBM_USERS:
+                bbm_for_tip = st.selectbox(
+                    "Select your BBM (for filtering OS / OG list)",
+                    options=sorted(BBM_USERS.keys()),
+                )
+            else:
+                bbm_for_tip = st.text_input("BBM Name (for filtering)")
+
             pwd_label = "Enter TIP Login Code (as per tip_users.json)"
+
         else:  # MGMT
             username = st.text_input("MGMT User ID (free text)")
             pwd_label = "Enter Management Password (from mgmt.json)"
@@ -421,6 +459,9 @@ def login_form():
             if password != expected:
                 st.error("❌ Invalid code for this TIP")
                 return
+            if not bbm_for_tip:
+                st.error("❌ Please select / enter your BBM")
+                return
 
         # If we reach here, login success → hard reset + set session
         for key in list(st.session_state.keys()):
@@ -434,8 +475,11 @@ def login_form():
 
         if role == "BBM":
             st.session_state.current_bbm = st.session_state.username
+        elif role == "TIP":
+            # set BBM filter as selected in login
+            st.session_state.current_bbm = str(bbm_for_tip).upper().strip()
         else:
-            # TIP & MGMT start with no BBM filter
+            # MGMT starts with no BBM filter
             st.session_state.current_bbm = ""
 
         st.success(f"✅ Logged in as {role}: {u}")
@@ -704,13 +748,12 @@ def tip_view():
     tip_name = st.session_state.username  # upper
 
     # ---- Let TIP choose BBM-wise filter (optional) ----
-    # Available BBMs for this TIP based on RAW data, not filtered
     os_tip_raw = pd.DataFrame()
     og_tip_raw = pd.DataFrame()
     if os_df_raw is not None and not os_df_raw.empty:
-        os_tip_raw = os_df_raw[os_df_raw["Maintanance Franchisee Name"].astype(str).str.upper().str.strip() == tip_name]
+        os_tip_raw = os_df_raw[os_df_raw[COL_OS_TIP_NAME].astype(str).str.upper().str.strip() == tip_name]
     if og_df_raw is not None and not og_df_raw.empty:
-        og_tip_raw = og_df_raw[og_df_raw["Maintenance Fanchisee Name"].astype(str).str.upper().str.strip() == tip_name]
+        og_tip_raw = og_df_raw[og_df_raw[COL_OG_TIP_NAME].astype(str).str.upper().str.strip() == tip_name]
 
     bbm_values = []
     if not os_tip_raw.empty:

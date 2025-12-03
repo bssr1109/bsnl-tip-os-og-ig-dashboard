@@ -242,6 +242,16 @@ os_df, og_df = preprocess()
 # -------------------------------------------------------------
 # NORMALIZED RECORDS FOR DASHBOARDS
 # -------------------------------------------------------------
+def parse_amount(value):
+    """Return numeric value for amount fields."""
+    if pd.isna(value):
+        return 0.0
+    try:
+        return float(str(value).replace(",", "").strip())
+    except Exception:
+        return 0.0
+
+
 def build_records(os_df, og_df):
     records = []
 
@@ -255,6 +265,7 @@ def build_records(os_df, og_df):
                     "ACCOUNT": r.get("Billing_Account_Number", ""),
                     "MOBILE": r.get("Mobile_Number", ""),
                     "AMOUNT": r.get("OS_Amount(Rs)", "0"),
+                    "AMOUNT_VALUE": parse_amount(r.get("OS_Amount(Rs)", 0)),
                     "CUSTOMER": r.get("First_Name", r.get("Customer Name", "")),
                 }
             )
@@ -269,13 +280,15 @@ def build_records(os_df, og_df):
                     "ACCOUNT": r.get("Account Number", ""),
                     "MOBILE": r.get("Mobile Number", ""),
                     "AMOUNT": r.get("OutStanding", "0"),
+                    "AMOUNT_VALUE": parse_amount(r.get("OutStanding", 0)),
                     "CUSTOMER": r.get("Customer Name", ""),
                 }
             )
 
     return pd.DataFrame(records)
 
-records_df = build_records(os_df, og_df)
+
+records_df = add_status_columns(build_records(os_df, og_df))
 
 # -------------------------------------------------------------
 # STATUS SYSTEM
@@ -327,6 +340,19 @@ def contacted(row):
     return bool(match.iloc[0]["LAST_CALL"] or match.iloc[0]["LAST_WA"])
 
 # -------------------------------------------------------------
+# STATUS DECORATORS
+# -------------------------------------------------------------
+def add_status_columns(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    df = df.copy()
+    df["CONTACTED"] = df.apply(contacted, axis=1)
+    df["STATUS_BADGE"] = df["CONTACTED"].apply(lambda x: "🟩 Done" if x else "🟧 Pending")
+    df["MOBILE_CLEAN"] = df["MOBILE"].fillna("").astype(str).str.replace(".0", "", regex=False)
+    return df
+
+# -------------------------------------------------------------
 # BADGE RENDER
 # -------------------------------------------------------------
 def badge(tip, bbm, src, acc):
@@ -346,23 +372,31 @@ def render_contact_buttons(row):
     bbm = row["BBM"]
     src = row["SOURCE"]
     acc = row["ACCOUNT"]
-    mob = row["MOBILE"]
-    nm = row["CUSTOMER"]
+    mob = row.get("MOBILE_CLEAN", row["MOBILE"])
+    nm = row["CUSTOMER"] or "Customer"
     amt = row["AMOUNT"]
+    status_chip = badge(tip, bbm, src, acc)
 
-    st.markdown(f"#### {src} — {acc} — ₹{amt} {badge(tip, bbm, src, acc)}")
-    c1, c2, c3 = st.columns(3)
+    st.markdown(
+        f"**{nm}** | {src} — **{acc}** — ₹{amt} &nbsp;&nbsp; {status_chip}<br>"
+        f"📞 {mob if mob else 'No mobile'}",
+        unsafe_allow_html=True,
+    )
+    c1, c2, c3 = st.columns([1, 1, 2])
 
-    if c1.button("Call Done", key=f"call_{src}_{acc}"):
+    if c1.button("Call Done", key=f"call_{src}_{acc}_{tip}"):
         mark_status(tip, bbm, src, acc, call=True)
         st.rerun()
 
-    if c2.button("WhatsApp Sent", key=f"wa_{src}_{acc}"):
+    if c2.button("WhatsApp Sent", key=f"wa_{src}_{acc}_{tip}"):
         mark_status(tip, bbm, src, acc, wa=True)
         st.rerun()
 
-    wa_link = f"https://wa.me/91{mob}?text=Dear {nm}, your {src} amount is ₹{amt}."
-    c3.markdown(f"[📩 WhatsApp Customer]({wa_link})")
+    wa_link = f"https://wa.me/91{mob}?text=Dear {nm}, your {src} amount is ₹{amt}." if mob else ""
+    if mob:
+        c3.markdown(f"[📩 WhatsApp Customer]({wa_link})")
+    else:
+        c3.write("No WhatsApp link (missing mobile)")
 
 
 def render_details(df, title="Account Details"):
@@ -375,62 +409,133 @@ def render_details(df, title="Account Details"):
         render_contact_buttons(row)
 
 
-def summary_cards(df, role):
-    st.subheader("Summary")
+def data_overview(os_df, og_df, records):
+    st.subheader("Data Source")
+    c1, c2, c3 = st.columns(3)
+
+    outstanding_total = os_df.get("OS_Amount(Rs)")
+    outstanding_val = (
+        outstanding_total.replace({"-": "0"}, regex=False)
+        .apply(parse_amount)
+        .sum()
+        if not os_df.empty and "OS_Amount(Rs)" in os_df.columns
+        else 0
+    )
+    og_val = og_df["OutStanding"].apply(parse_amount).sum() if not og_df.empty and "OutStanding" in og_df.columns else 0
+
+    c1.metric("Outstanding (OS file)", f"₹{outstanding_val:,.0f}")
+    c2.metric("OG/IC Outstanding", f"₹{og_val:,.0f}")
+    c3.metric("Total Records", len(records))
+
+    st.info("Keep uploads updated. Use auto-refresh if you expect new data while tab is open.")
+
+
+def aggregated_summary(df, group_field):
+    if df.empty:
+        return pd.DataFrame(columns=[group_field, "Total", "Contacted", "Pending", "Outstanding"])
+
+    grouped = (
+        df.groupby(group_field)
+        .agg(
+            Total=("ACCOUNT", "count"),
+            Contacted=("CONTACTED", "sum"),
+            Outstanding=("AMOUNT_VALUE", "sum"),
+        )
+        .reset_index()
+    )
+    grouped["Pending"] = grouped["Total"] - grouped["Contacted"]
+    grouped["Outstanding"] = grouped["Outstanding"].round(2)
+    return grouped[[group_field, "Total", "Contacted", "Pending", "Outstanding"]]
+
+
+def summary_cards(df, role, title_suffix=""):
+    st.subheader(f"Summary {title_suffix}")
     if df.empty:
         st.info("No records to summarize.")
         return
 
-    df = df.copy()
-    df["CONTACTED"] = df.apply(contacted, axis=1)
-
     total_accounts = len(df)
-    contacted_accounts = df["CONTACTED"].sum()
+    contacted_accounts = int(df["CONTACTED"].sum())
     pending_accounts = total_accounts - contacted_accounts
+    unique_mobiles = df["MOBILE_CLEAN"].replace("", pd.NA).dropna().nunique()
+    outstanding_sum = df["AMOUNT_VALUE"].sum()
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total Accounts", total_accounts)
     c2.metric("Contacted (Call/WA)", int(contacted_accounts))
     c3.metric("Pending", int(pending_accounts))
+    c4.metric("Unique Mobiles", int(unique_mobiles))
 
     group_field = "TIP" if role == "BBM" else "BBM"
-    grouped = (
-        df.groupby(group_field)
-        .agg(total=("ACCOUNT", "count"), contacted=("CONTACTED", "sum"))
-        .reset_index()
-    )
-    grouped["pending"] = grouped["total"] - grouped["contacted"]
+    grouped = aggregated_summary(df, group_field)
+    st.dataframe(grouped.rename(columns={group_field: group_field}))
 
-    st.dataframe(grouped.rename(columns={group_field: group_field, "pending": "Pending"}))
+    st.caption(f"Outstanding value in view: ₹{outstanding_sum:,.0f}")
+
+
+def disconnected_section(df, label):
+    disconnected = df[df["MOBILE_CLEAN"] == ""]
+    st.markdown(f"#### Disconnected Outcomes ({label})")
+    if disconnected.empty:
+        st.success("No disconnected/blank mobile numbers detected.")
+    else:
+        st.error(
+            "These customers have missing mobile numbers. Please update records before attempting calls."
+        )
+        show_cols = ["CUSTOMER", "ACCOUNT", "SOURCE", "AMOUNT"]
+        st.dataframe(disconnected[show_cols])
+
+
+def detail_filter_section(df, label):
+    options = ["All", "Pending Only", "Contacted Only"]
+    choice = st.radio(label, options, horizontal=True, key=f"filter_{label}_{st.session_state.role}")
+    if choice == "Pending Only":
+        return df[df["CONTACTED"] == False]
+    if choice == "Contacted Only":
+        return df[df["CONTACTED"] == True]
+    return df
 
 
 def tipwise_view(df):
     tips = sorted(df["TIP"].unique())
     tip_choice = st.selectbox("Select TIP", tips)
     filtered = df[df["TIP"] == tip_choice]
-    summary_cards(filtered, role="BBM")
+    summary_cards(filtered, role="BBM", title_suffix=f"for {tip_choice}")
+    filtered = detail_filter_section(filtered, "View status")
     render_details(filtered, title=f"Details for {tip_choice}")
+    disconnected_section(filtered, label=f"TIP {tip_choice}")
 
 
 def tip_dashboard(df):
     st.header("📊 TIP Dashboard")
-    summary_cards(df, role="TIP")
-    render_details(df, title="My Accounts")
+    data_overview(os_df, og_df, df)
+    summary_cards(df, role="TIP", title_suffix="(My Accounts)")
+    filtered = detail_filter_section(df, "What do you want to view?")
+    render_details(filtered, title="My Accounts")
+    disconnected_section(df, label="TIP view")
 
 
 def bbm_dashboard(df):
     st.header("📊 BBM Dashboard")
     menu = st.sidebar.radio("BBM Menu", ["Summary", "TIP-wise Details"])
+    data_overview(os_df, og_df, df)
+
     if menu == "Summary":
         summary_cards(df, role="BBM")
+        filtered = detail_filter_section(df, "Filter status")
+        render_details(filtered, title="Call & WhatsApp Status")
+        disconnected_section(df, label="BBM")
     else:
         tipwise_view(df)
 
 
 def mgmt_dashboard(df):
     st.header("📊 MGMT Dashboard")
+    data_overview(os_df, og_df, df)
     summary_cards(df, role="MGMT")
-    render_details(df, title="All Accounts")
+    filtered = detail_filter_section(df, "Filter status")
+    render_details(filtered, title="All Accounts")
+    disconnected_section(df, label="Management")
 
 
 if records_df.empty:

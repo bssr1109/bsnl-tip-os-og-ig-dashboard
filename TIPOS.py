@@ -49,7 +49,7 @@ COL_OS_AMOUNT = "OS_Amount(Rs)"
 # Optional FTTH/service number columns (auto-detect)
 FTTH_CANDIDATES = [
     "FTTH NUMBER", "FTTH NO", "FTTH_NO", "FTTHNUMBER",
-    "TELEPHONE NUMBER", "SERVICE NUMBER", "PHONE NO", "LANDLINE NUMBER",
+    "TELEPHONE_NUMBER", "SERVICE NUMBER", "PHONE NO", "LANDLINE NUMBER",
     "LL NUMBER", "CLI", "UID", "CUSTOMER ID", "USER ID"
 ]
 
@@ -978,6 +978,7 @@ elif st.session_state.role == "BBM":
     bbm_view()
 else:  # MGMT
     mgmt_view()
+
 
 
 

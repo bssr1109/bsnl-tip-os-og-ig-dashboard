@@ -497,7 +497,7 @@ def preprocess(os_df, og_df):
     if os_df is None:
         df_os = pd.DataFrame(columns=[
             COL_OS_TIP_NAME, COL_OS_BBM, COL_OS_BA,
-            COL_OS_MOBILE, COL_OS_CUST_NAME, COL_OS_ADDR, COL_OS_AMOUNT
+            COL_OS_MOBILE, COL_OS_CUST_NAME, COL_OS_ADDR, COL_OS_AMOUNT,FTTH_CANDIDATES
         ])
     else:
         df_os = os_df.copy()
@@ -505,7 +505,7 @@ def preprocess(os_df, og_df):
     if og_df is None:
         df_og = pd.DataFrame(columns=[
             COL_OG_TIP_NAME, COL_OG_BBM, COL_OG_BA,
-            COL_OG_MOBILE, COL_OG_CUST_NAME, COL_OG_ADDR, COL_OG_AMOUNT
+            COL_OG_MOBILE, COL_OG_CUST_NAME, COL_OG_ADDR, COL_OG_AMOUNT,FTTH_CANDIDATES
         ])
     else:
         df_og = og_df.copy()
@@ -978,6 +978,7 @@ elif st.session_state.role == "BBM":
     bbm_view()
 else:  # MGMT
     mgmt_view()
+
 
 
 

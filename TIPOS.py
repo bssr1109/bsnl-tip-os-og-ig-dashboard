@@ -46,13 +46,13 @@ COL_OS_MOBILE = "Mobile_Number"
 COL_OS_CUST_NAME = "First_Name"
 COL_OS_ADDR = "Address"
 COL_OS_AMOUNT = "OS_Amount(Rs)"
+
 # Optional FTTH/service number columns (auto-detect)
 FTTH_CANDIDATES = [
     "FTTH NUMBER", "FTTH NO", "FTTH_NO", "FTTHNUMBER",
     "Telephone_Number", "SERVICE NUMBER", "PHONE NO", "LANDLINE NUMBER",
     "LL NUMBER", "CLI", "UID", "CUSTOMER ID", "USER ID"
 ]
-
 
 # Barred Customer List (OGB_ICB_02.11.2025.xlsx → OG IC Barred List)
 COL_OG_TIP_NAME = "Maintenance Fanchisee Name"
@@ -257,7 +257,6 @@ def login_form():
         )
         return
 
-    # ---- VERY IMPORTANT: radio OUTSIDE form ----
     role = st.radio(
         "Login as",
         ["TIP", "BBM", "MGMT"],
@@ -268,7 +267,6 @@ def login_form():
     with st.form("login_form"):
         bbm_for_tip = None
 
-        # ---------------- TIP ----------------
         if role == "TIP":
             if TIP_USERS:
                 username = st.selectbox(
@@ -292,7 +290,6 @@ def login_form():
 
             pwd_label = "Enter TIP Login Code (as per tip_users.json)"
 
-        # ---------------- BBM ----------------
         elif role == "BBM":
             if BBM_USERS:
                 username = st.selectbox(
@@ -305,7 +302,6 @@ def login_form():
 
             pwd_label = "Enter BBM Login Code (as per bbm_users.json)"
 
-        # ---------------- MGMT ----------------
         else:  # MGMT
             username = st.text_input("MGMT User ID", key="mgmt_user")
             pwd_label = "Enter Management Password (from mgmt.json)"
@@ -321,7 +317,6 @@ def login_form():
             st.error("❌ Please select / enter User ID")
             return
 
-        # ---------- AUTH ----------
         if role == "MGMT":
             if not MGMT_PASSWORD:
                 st.error("❌ MGMT password not configured in mgmt.json")
@@ -351,7 +346,6 @@ def login_form():
                 st.error("❌ Please select / enter your BBM")
                 return
 
-        # ---------- SUCCESS: reset & set session ----------
         for key in list(st.session_state.keys()):
             del st.session_state[key]
 
@@ -384,13 +378,15 @@ with col_logout:
         st.rerun()
 
 with col_user:
-    st.info(f"Logged in as **{st.session_state.role}** – `{st.session_state.username}` (BBM filter: `{st.session_state.current_bbm or 'ALL'}`)")
+    st.info(
+        f"Logged in as **{st.session_state.role}** – `{st.session_state.username}` "
+        f"(BBM filter: `{st.session_state.current_bbm or 'ALL'}`)"
+    )
 
 # ----------------- DATA LOAD (PERSIST AFTER RESTART) -----------------
 def load_data():
     role = st.session_state.role
 
-    # if already in session
     if st.session_state.os_df is not None or st.session_state.og_df is not None:
         return st.session_state.os_df, st.session_state.og_df
 
@@ -431,7 +427,6 @@ def load_data():
             key="og_file",
         )
 
-        # OUTSTANDING
         if os_file is not None:
             try:
                 xls_os = pd.ExcelFile(os_file)
@@ -456,7 +451,6 @@ def load_data():
             except Exception as e:
                 st.error(f"Error reading Outstanding List file: {e}")
 
-        # BARRED
         if og_file is not None:
             try:
                 xls_og = pd.ExcelFile(og_file)
@@ -488,36 +482,19 @@ def load_data():
 
 os_df_raw, og_df_raw = load_data()
 
-# For TIP/BBM, need data to continue; for MGMT we can still show logs
 if os_df_raw is None and og_df_raw is None and st.session_state.role in ("TIP", "BBM"):
     st.stop()
 
 # ----------------- PREPROCESS -----------------
 def preprocess(os_df, og_df):
-    if os_df is None:
-        df_os = pd.DataFrame(columns=[
-            COL_OS_TIP_NAME, COL_OS_BBM, COL_OS_BA,
-            COL_OS_MOBILE, COL_OS_CUST_NAME, COL_OS_ADDR, COL_OS_AMOUNT,FTTH_CANDIDATES
-        ])
-    else:
-        df_os = os_df.copy()
-
-    if og_df is None:
-        df_og = pd.DataFrame(columns=[
-            COL_OG_TIP_NAME, COL_OG_BBM, COL_OG_BA,
-            COL_OG_MOBILE, COL_OG_CUST_NAME, COL_OG_ADDR, COL_OG_AMOUNT,FTTH_CANDIDATES
-        ])
-    else:
-        df_og = og_df.copy()
-        
-            def find_ftth_column(df):
-        """Return the actual column name for FTTH/service number if present, else None."""
+    # helper MUST be properly indented (this was broken earlier)
+    def find_ftth_column(df):
+        """Return actual column name for FTTH/service number if present, else None."""
         cols = {str(c).strip().upper(): c for c in df.columns}
         for cand in FTTH_CANDIDATES:
             if cand in cols:
                 return cols[cand]
         return None
-
 
     def clean_mobile(x):
         if pd.isna(x):
@@ -526,21 +503,45 @@ def preprocess(os_df, og_df):
         if x.endswith(".0"):
             x = x[:-2]
         return "".join(ch for ch in x if ch.isdigit())
-            # Add a unified FTTH column (works even if source column name changes)
+
+    if os_df is None:
+        df_os = pd.DataFrame(columns=[
+            COL_OS_TIP_NAME, COL_OS_BBM, COL_OS_BA,
+            COL_OS_MOBILE, COL_OS_CUST_NAME, COL_OS_ADDR, COL_OS_AMOUNT, "FTTH_NO"
+        ])
+    else:
+        df_os = os_df.copy()
+
+    if og_df is None:
+        df_og = pd.DataFrame(columns=[
+            COL_OG_TIP_NAME, COL_OG_BBM, COL_OG_BA,
+            COL_OG_MOBILE, COL_OG_CUST_NAME, COL_OG_ADDR, COL_OG_AMOUNT, "FTTH_NO"
+        ])
+    else:
+        df_og = og_df.copy()
+
+    # Add unified FTTH_NO
     if not df_os.empty:
         ftth_col_os = find_ftth_column(df_os)
         if ftth_col_os:
-            df_os["FTTH_NO"] = df_os[ftth_col_os].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
+            df_os["FTTH_NO"] = (
+                df_os[ftth_col_os].astype(str)
+                .str.replace(r"\.0$", "", regex=True)
+                .str.strip()
+            )
         else:
             df_os["FTTH_NO"] = ""
 
     if not df_og.empty:
         ftth_col_og = find_ftth_column(df_og)
         if ftth_col_og:
-            df_og["FTTH_NO"] = df_og[ftth_col_og].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
+            df_og["FTTH_NO"] = (
+                df_og[ftth_col_og].astype(str)
+                .str.replace(r"\.0$", "", regex=True)
+                .str.strip()
+            )
         else:
             df_og["FTTH_NO"] = ""
-
 
     if not df_os.empty:
         df_os["TIP_NAME_STD"] = df_os[COL_OS_TIP_NAME].astype(str).str.strip().str.upper()
@@ -631,11 +632,9 @@ def tip_view():
                 mobile = row[COL_OS_MOBILE]
                 amount = row[COL_OS_AMOUNT]
                 acc_no = str(row[COL_OS_BA])
-                ftth_no = str(row.get("FTTH_NO", "")).strip()
-if ftth_no:
-    st.write(f"FTTH: `{ftth_no}`")
 
-                
+                ftth_no = str(row.get("FTTH_NO", "")).strip()
+                ftth_line = f"<br><b>FTTH No:</b> {ftth_no}" if ftth_no else ""
 
                 last_call, last_wa = status_map_os.get(acc_no, ("", ""))
 
@@ -644,7 +643,7 @@ if ftth_no:
 
                 st.markdown(
                     f"<div style='background:{bg};padding:8px;border-radius:6px;'>"
-                    f"<b>{cust_name}</b> | Acc: {acc_no} | Tel no :{ftth_no}<br>"
+                    f"<b>{cust_name}</b> | Acc: {acc_no}{ftth_line}<br>"
                     f"{addr}<br>"
                     f"OS: ₹{amount:,.2f}<br>"
                     f"{make_tel_link(mobile)}&nbsp;&nbsp;{make_whatsapp_link(mobile, f'Dear {cust_name}, your BSNL FTTH outstanding is Rs {amount:.2f}. Kindly pay immediately.')}"
@@ -679,10 +678,9 @@ if ftth_no:
                 mobile = row[COL_OG_MOBILE]
                 amount = row[COL_OG_AMOUNT]
                 acc_no = str(row[COL_OG_BA])
-                ftth_no = str(row.get("FTTH_NO", "")).strip()
-if ftth_no:
-    st.write(f"FTTH: `{ftth_no}`")
 
+                ftth_no = str(row.get("FTTH_NO", "")).strip()
+                ftth_line = f"<br><b>FTTH No:</b> {ftth_no}" if ftth_no else ""
 
                 last_call, last_wa = status_map_og.get(acc_no, ("", ""))
 
@@ -691,7 +689,7 @@ if ftth_no:
 
                 st.markdown(
                     f"<div style='background:{bg};padding:8px;border-radius:6px;'>"
-                    f"<b>{cust_name}</b> | Acc: {acc_no}<br>"
+                    f"<b>{cust_name}</b> | Acc: {acc_no}{ftth_line}<br>"
                     f"{addr}<br>"
                     f"Outstanding: ₹{amount:,.2f}<br>"
                     f"{make_tel_link(mobile)}&nbsp;&nbsp;{make_whatsapp_link(mobile, f'Dear {cust_name}, your BSNL FTTH bill is overdue. Outstanding Rs {amount:.2f}. Kindly pay immediately.')}"
@@ -718,7 +716,6 @@ def bbm_view():
 
     global os_df, og_df
 
-    # ----------- TOP METRICS -----------
     total_os_all = os_df[COL_OS_AMOUNT].sum() if not os_df.empty else 0
     total_og_all = og_df[COL_OG_AMOUNT].sum() if not og_df.empty else 0
     total_os_cust = len(os_df)
@@ -730,7 +727,6 @@ def bbm_view():
     with c3: st.metric("👥 OS Customers", total_os_cust)
     with c4: st.metric("👥 Barred Customers", total_og_cust)
 
-    # ----------- UPLOAD SECTION (RESTORED) -----------
     st.markdown("---")
     st.markdown("### 📥 Upload Monthly Files (BBM Only)")
 
@@ -746,7 +742,6 @@ def bbm_view():
         key="bbm_og_upload"
     )
 
-    # ----------- PROCESS OS UPLOAD -----------
     if os_file is not None:
         try:
             xls_os = pd.ExcelFile(os_file)
@@ -770,7 +765,6 @@ def bbm_view():
         except Exception as e:
             st.error(f"❌ Error uploading Outstanding List: {e}")
 
-    # ----------- PROCESS OG UPLOAD -----------
     if og_file is not None:
         try:
             xls_og = pd.ExcelFile(og_file)
@@ -793,11 +787,9 @@ def bbm_view():
     # Re-load after upload
     os_df, og_df = preprocess(st.session_state.os_df, st.session_state.og_df)
 
-    # ----------- TIP-WISE SUMMARY -----------
     st.markdown("---")
     st.markdown("### 📊 TIP-wise Summary for this BBM")
 
-    # OS
     if not os_df.empty:
         os_summary = os_df.groupby("TIP_NAME_STD").agg(
             Total_OS=(COL_OS_AMOUNT, "sum"),
@@ -806,7 +798,6 @@ def bbm_view():
     else:
         os_summary = pd.DataFrame(columns=["Total_OS", "OS_Customers"])
 
-    # OG
     if not og_df.empty:
         og_summary = og_df.groupby("TIP_NAME_STD").agg(
             Total_OG=(COL_OG_AMOUNT, "sum"),
@@ -819,7 +810,6 @@ def bbm_view():
     summary = summary.reset_index().rename(columns={"TIP_NAME_STD": "TIP Name"})
     st.dataframe(summary, use_container_width=True)
 
-    # ----------- TIP DRILL DOWN WITH CALL/WA -----------
     st.markdown("---")
     st.markdown("### 📞 Call / 💬 WhatsApp – TIP-wise Customers")
 
@@ -839,7 +829,6 @@ def bbm_view():
     show_os = view_choice != "Only Barred (OG/IC Working)"
     show_og = view_choice != "Only OS (Disconnected)"
 
-    # ----------------- OS CUSTOMERS -----------------
     if show_os:
         st.markdown("#### 📴 Disconnected (OS) Customers")
         tip_os = os_df[os_df["TIP_NAME_STD"] == selected_tip]
@@ -854,7 +843,9 @@ def bbm_view():
                 mobile = r[COL_OS_MOBILE]
                 amount = r[COL_OS_AMOUNT]
                 acc = str(r[COL_OS_BA])
-                ftth_no = r[FTTH_CANDIDATES]
+
+                ftth_no = str(r.get("FTTH_NO", "")).strip()
+                ftth_line = f"<br><b>FTTH No:</b> {ftth_no}" if ftth_no else ""
 
                 last_call, last_wa = status_os.get(acc, ("", ""))
 
@@ -863,7 +854,7 @@ def bbm_view():
 
                 st.markdown(
                     f"<div style='background:{bg};padding:8px;border-radius:6px;'>"
-                    f"<b>{cust}</b> | Acc: {acc} No :{ftth_no}<br>{addr}<br>"
+                    f"<b>{cust}</b> | Acc: {acc}{ftth_line}<br>{addr}<br>"
                     f"OS: ₹{amount:,.2f}<br>"
                     f"{make_tel_link(mobile)} "
                     f"{make_whatsapp_link(mobile, f'Dear {cust}, Your BSNL FTTH outstanding is Rs {amount:.2f}. Please pay immediately.')}"
@@ -882,7 +873,6 @@ def bbm_view():
                         update_status(selected_tip, "OS", acc, update_whatsapp=True)
                         st.rerun()
 
-    # ----------------- OG CUSTOMERS -----------------
     if show_og:
         st.markdown("#### 📡 Working (OG/IC Barred) Customers")
         tip_og = og_df[og_df["TIP_NAME_STD"] == selected_tip]
@@ -898,6 +888,9 @@ def bbm_view():
                 amount = r[COL_OG_AMOUNT]
                 acc = str(r[COL_OG_BA])
 
+                ftth_no = str(r.get("FTTH_NO", "")).strip()
+                ftth_line = f"<br><b>FTTH No:</b> {ftth_no}" if ftth_no else ""
+
                 last_call, last_wa = status_og.get(acc, ("", ""))
 
                 green = bool(last_call or last_wa)
@@ -905,7 +898,7 @@ def bbm_view():
 
                 st.markdown(
                     f"<div style='background:{bg};padding:8px;border-radius:6px;'>"
-                    f"<b>{cust}</b> | Acc: {acc}<br>{addr}<br>"
+                    f"<b>{cust}</b> | Acc: {acc}{ftth_line}<br>{addr}<br>"
                     f"Outstanding: ₹{amount:,.2f}<br>"
                     f"{make_tel_link(mobile)} "
                     f"{make_whatsapp_link(mobile, f'Dear {cust}, Your BSNL FTTH bill is overdue. Outstanding Rs {amount:.2f}. Please pay immediately.')}"
@@ -924,7 +917,6 @@ def bbm_view():
                         update_status(selected_tip, "OG", acc, update_whatsapp=True)
                         st.rerun()
 
-    # ----------- UPLOAD LOG -----------
     st.markdown("---")
     st.markdown("### 📁 BBM Upload Log")
 
@@ -953,7 +945,11 @@ def mgmt_view():
         return
 
     month_list = sorted(sheets.keys())
-    selected_month = st.selectbox("Select month:", month_list, index=month_list.index(CURRENT_MONTH) if CURRENT_MONTH in month_list else len(month_list)-1)
+    selected_month = st.selectbox(
+        "Select month:",
+        month_list,
+        index=month_list.index(CURRENT_MONTH) if CURRENT_MONTH in month_list else len(month_list) - 1
+    )
     df_month = sheets[selected_month].copy()
     if df_month.empty:
         st.info("No contacts in this month.")
@@ -979,12 +975,3 @@ elif st.session_state.role == "BBM":
     bbm_view()
 else:  # MGMT
     mgmt_view()
-
-
-
-
-
-
-
-
-

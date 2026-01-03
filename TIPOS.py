@@ -854,6 +854,7 @@ def bbm_view():
                 mobile = r[COL_OS_MOBILE]
                 amount = r[COL_OS_AMOUNT]
                 acc = str(r[COL_OS_BA])
+                ftth_no = r[FTTH_CANDIDATES]
 
                 last_call, last_wa = status_os.get(acc, ("", ""))
 
@@ -862,7 +863,7 @@ def bbm_view():
 
                 st.markdown(
                     f"<div style='background:{bg};padding:8px;border-radius:6px;'>"
-                    f"<b>{cust}</b> | Acc: {acc}<br>{addr}<br>"
+                    f"<b>{cust}</b> | Acc: {acc} No :{ftth_no}<br>{addr}<br>"
                     f"OS: ₹{amount:,.2f}<br>"
                     f"{make_tel_link(mobile)} "
                     f"{make_whatsapp_link(mobile, f'Dear {cust}, Your BSNL FTTH outstanding is Rs {amount:.2f}. Please pay immediately.')}"
@@ -978,6 +979,7 @@ elif st.session_state.role == "BBM":
     bbm_view()
 else:  # MGMT
     mgmt_view()
+
 
 
 

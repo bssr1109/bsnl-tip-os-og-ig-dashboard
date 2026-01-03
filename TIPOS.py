@@ -623,8 +623,9 @@ def tip_view():
                 amount = row[COL_OS_AMOUNT]
                 acc_no = str(row[COL_OS_BA])
 
-                Telephone_Number = str(row.get("Telephone_Number", "")).strip()
-                ftth_line = f"<br><b>FTTH No:</b> {Telephone_Number}" if Telephone_Number else ""
+                ftth_no = str(r.get("FTTH_NO", "")).strip()
+                ftth_line = f"<br><b>FTTH No:</b> {ftth_no}" if ftth_no else ""
+
 
                 last_call, last_wa = status_map_os.get(acc_no, ("", ""))
 
@@ -965,6 +966,7 @@ elif st.session_state.role == "BBM":
     bbm_view()
 else:  # MGMT
     mgmt_view()
+
 
 
 

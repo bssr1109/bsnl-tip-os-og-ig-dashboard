@@ -46,6 +46,13 @@ COL_OS_MOBILE = "Mobile_Number"
 COL_OS_CUST_NAME = "First_Name"
 COL_OS_ADDR = "Address"
 COL_OS_AMOUNT = "OS_Amount(Rs)"
+# Optional FTTH/service number columns (auto-detect)
+FTTH_CANDIDATES = [
+    "FTTH NUMBER", "FTTH NO", "FTTH_NO", "FTTHNUMBER",
+    "TELEPHONE NUMBER", "SERVICE NUMBER", "PHONE NO", "LANDLINE NUMBER",
+    "LL NUMBER", "CLI", "UID", "CUSTOMER ID", "USER ID"
+]
+
 
 # Barred Customer List (OGB_ICB_02.11.2025.xlsx → OG IC Barred List)
 COL_OG_TIP_NAME = "Maintenance Fanchisee Name"
@@ -502,6 +509,15 @@ def preprocess(os_df, og_df):
         ])
     else:
         df_og = og_df.copy()
+        
+            def find_ftth_column(df):
+        """Return the actual column name for FTTH/service number if present, else None."""
+        cols = {str(c).strip().upper(): c for c in df.columns}
+        for cand in FTTH_CANDIDATES:
+            if cand in cols:
+                return cols[cand]
+        return None
+
 
     def clean_mobile(x):
         if pd.isna(x):
@@ -510,6 +526,21 @@ def preprocess(os_df, og_df):
         if x.endswith(".0"):
             x = x[:-2]
         return "".join(ch for ch in x if ch.isdigit())
+            # Add a unified FTTH column (works even if source column name changes)
+    if not df_os.empty:
+        ftth_col_os = find_ftth_column(df_os)
+        if ftth_col_os:
+            df_os["FTTH_NO"] = df_os[ftth_col_os].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
+        else:
+            df_os["FTTH_NO"] = ""
+
+    if not df_og.empty:
+        ftth_col_og = find_ftth_column(df_og)
+        if ftth_col_og:
+            df_og["FTTH_NO"] = df_og[ftth_col_og].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
+        else:
+            df_og["FTTH_NO"] = ""
+
 
     if not df_os.empty:
         df_os["TIP_NAME_STD"] = df_os[COL_OS_TIP_NAME].astype(str).str.strip().str.upper()
@@ -600,6 +631,11 @@ def tip_view():
                 mobile = row[COL_OS_MOBILE]
                 amount = row[COL_OS_AMOUNT]
                 acc_no = str(row[COL_OS_BA])
+                ftth_no = str(row.get("FTTH_NO", "")).strip()
+if ftth_no:
+    st.write(f"FTTH: `{ftth_no}`")
+
+                
 
                 last_call, last_wa = status_map_os.get(acc_no, ("", ""))
 
@@ -643,6 +679,10 @@ def tip_view():
                 mobile = row[COL_OG_MOBILE]
                 amount = row[COL_OG_AMOUNT]
                 acc_no = str(row[COL_OG_BA])
+                ftth_no = str(row.get("FTTH_NO", "")).strip()
+if ftth_no:
+    st.write(f"FTTH: `{ftth_no}`")
+
 
                 last_call, last_wa = status_map_og.get(acc_no, ("", ""))
 
@@ -938,6 +978,7 @@ elif st.session_state.role == "BBM":
     bbm_view()
 else:  # MGMT
     mgmt_view()
+
 
 
 

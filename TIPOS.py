@@ -484,6 +484,7 @@ def load_data():
     return os_df, og_df
 
 os_df_raw, og_df_raw = load_data()
+os_df, og_df = preprocess(os_df_raw, og_df_raw)
 
 if os_df_raw is None and og_df_raw is None and st.session_state.role in ("TIP", "BBM"):
     st.stop()
@@ -516,14 +517,14 @@ def preprocess(os_df, og_df):
         ftth_col_os = find_ftth_column(df_os)
 
         if ftth_col_os:
-            df_os["Telephone_Number"] = (
-                df_os[ftth_col_os]
-                .astype(str)
-                .str.replace(r"\.0$", "", regex=True)
-                .str.strip()
-            )
-        else:
-            df_os["Telephone_Number"] = ""
+    df_os["FTTH_NO"] = (
+        df_os[ftth_col_os].astype(str)
+        .str.replace(r"\.0$", "", regex=True)
+        .str.strip()
+    )
+else:
+    df_os["FTTH_NO"] = ""
+
 
         df_os["TIP_NAME_STD"] = df_os[COL_OS_TIP_NAME].astype(str).str.upper().str.strip()
         df_os["BBM_STD"] = df_os[COL_OS_BBM].astype(str).str.upper().str.strip()
@@ -536,15 +537,15 @@ def preprocess(os_df, og_df):
     if not df_og.empty:
         ftth_col_og = find_ftth_column(df_og)
 
-        if ftth_col_og:
-            df_og["Telephone_Number"] = (
-                df_og[ftth_col_og]
-                .astype(str)
-                .str.replace(r"\.0$", "", regex=True)
-                .str.strip()
-            )
-        else:
-            df_og["Telephone_Number"] = ""
+        if ftth_col_os:
+    df_os["FTTH_NO"] = (
+        df_os[ftth_col_os].astype(str)
+        .str.replace(r"\.0$", "", regex=True)
+        .str.strip()
+    )
+else:
+    df_os["FTTH_NO"] = ""
+
 
         df_og["TIP_NAME_STD"] = df_og[COL_OG_TIP_NAME].astype(str).str.upper().str.strip()
         df_og["BBM_STD"] = df_og[COL_OG_BBM].astype(str).str.upper().str.strip()
@@ -623,7 +624,7 @@ def tip_view():
                 amount = row[COL_OS_AMOUNT]
                 acc_no = str(row[COL_OS_BA])
 
-                ftth_no = str(r.get("FTTH_NO", "")).strip()
+               ftth_no = str(row.get("FTTH_NO", "")).strip()
                 ftth_line = f"<br><b>FTTH No:</b> {ftth_no}" if ftth_no else ""
 
 
@@ -670,7 +671,7 @@ def tip_view():
                 amount = row[COL_OG_AMOUNT]
                 acc_no = str(row[COL_OG_BA])
 
-              ftth_no = str(r.get("FTTH_NO", "")).strip()
+             ftth_no = str(row.get("FTTH_NO", "")).strip()
               ftth_line = f"<br><b>FTTH No:</b> {ftth_no}" if ftth_no else ""
 
 
@@ -968,6 +969,7 @@ elif st.session_state.role == "BBM":
     bbm_view()
 else:  # MGMT
     mgmt_view()
+
 
 
 

@@ -50,9 +50,12 @@ COL_OS_AMOUNT = "OS_Amount(Rs)"
 # Optional FTTH/service number columns (auto-detect)
 FTTH_CANDIDATES = [
     "FTTH NUMBER", "FTTH NO", "FTTH_NO", "FTTHNUMBER",
-    "Telephone_Number", "SERVICE NUMBER", "PHONE NO", "LANDLINE NUMBER",
+    "TELEPHONE_NUMBER", "TELEPHONE NUMBER", "TELEPHONE NO",
+    "SERVICE NUMBER", "SERVICE_NUMBER",
+    "PHONE NO", "LANDLINE NUMBER",
     "LL NUMBER", "CLI", "UID", "CUSTOMER ID", "USER ID"
 ]
+
 
 # Barred Customer List (OGB_ICB_02.11.2025.xlsx → OG IC Barred List)
 COL_OG_TIP_NAME = "Maintenance Fanchisee Name"
@@ -487,13 +490,15 @@ if os_df_raw is None and og_df_raw is None and st.session_state.role in ("TIP", 
 
 # ----------------- PREPROCESS -----------------
 def preprocess(os_df, og_df):
-    # helper MUST be properly indented (this was broken earlier)
+
     def find_ftth_column(df):
-        """Return actual column name for FTTH/service number if present, else None."""
+        # Map: UPPER CASE column name -> actual column name
         cols = {str(c).strip().upper(): c for c in df.columns}
+
         for cand in FTTH_CANDIDATES:
-            if cand in cols:
-                return cols[cand]
+            cand_u = cand.strip().upper()
+            if cand_u in cols:
+                return cols[cand_u]
         return None
 
     def clean_mobile(x):
@@ -504,65 +509,51 @@ def preprocess(os_df, og_df):
             x = x[:-2]
         return "".join(ch for ch in x if ch.isdigit())
 
-    if os_df is None:
-        df_os = pd.DataFrame(columns=[
-            COL_OS_TIP_NAME, COL_OS_BBM, COL_OS_BA,
-            COL_OS_MOBILE, COL_OS_CUST_NAME, COL_OS_ADDR, COL_OS_AMOUNT, "FTTH_NO"
-        ])
-    else:
-        df_os = os_df.copy()
+    # ---------- OS ----------
+    df_os = os_df.copy() if os_df is not None else pd.DataFrame()
 
-    if og_df is None:
-        df_og = pd.DataFrame(columns=[
-            COL_OG_TIP_NAME, COL_OG_BBM, COL_OG_BA,
-            COL_OG_MOBILE, COL_OG_CUST_NAME, COL_OG_ADDR, COL_OG_AMOUNT, "FTTH_NO"
-        ])
-    else:
-        df_og = og_df.copy()
-
-    # Add unified FTTH_NO
     if not df_os.empty:
         ftth_col_os = find_ftth_column(df_os)
+
         if ftth_col_os:
             df_os["FTTH_NO"] = (
-                df_os[ftth_col_os].astype(str)
+                df_os[ftth_col_os]
+                .astype(str)
                 .str.replace(r"\.0$", "", regex=True)
                 .str.strip()
             )
         else:
             df_os["FTTH_NO"] = ""
 
+        df_os["TIP_NAME_STD"] = df_os[COL_OS_TIP_NAME].astype(str).str.upper().str.strip()
+        df_os["BBM_STD"] = df_os[COL_OS_BBM].astype(str).str.upper().str.strip()
+        df_os[COL_OS_MOBILE] = df_os[COL_OS_MOBILE].apply(clean_mobile)
+        df_os[COL_OS_AMOUNT] = pd.to_numeric(df_os[COL_OS_AMOUNT], errors="coerce").fillna(0)
+
+    # ---------- OG ----------
+    df_og = og_df.copy() if og_df is not None else pd.DataFrame()
+
     if not df_og.empty:
         ftth_col_og = find_ftth_column(df_og)
+
         if ftth_col_og:
             df_og["FTTH_NO"] = (
-                df_og[ftth_col_og].astype(str)
+                df_og[ftth_col_og]
+                .astype(str)
                 .str.replace(r"\.0$", "", regex=True)
                 .str.strip()
             )
         else:
             df_og["FTTH_NO"] = ""
 
-    if not df_os.empty:
-        df_os["TIP_NAME_STD"] = df_os[COL_OS_TIP_NAME].astype(str).str.strip().str.upper()
-        df_os["BBM_STD"] = df_os[COL_OS_BBM].astype(str).str.strip().str.upper()
-        df_os[COL_OS_MOBILE] = df_os[COL_OS_MOBILE].apply(clean_mobile)
-        df_os[COL_OS_AMOUNT] = pd.to_numeric(df_os[COL_OS_AMOUNT], errors="coerce").fillna(0)
-    else:
-        df_os["TIP_NAME_STD"] = []
-        df_os["BBM_STD"] = []
-
-    if not df_og.empty:
-        df_og["TIP_NAME_STD"] = df_og[COL_OG_TIP_NAME].astype(str).str.strip().str.upper()
-        df_og["BBM_STD"] = df_og[COL_OG_BBM].astype(str).str.strip().str.upper()
+        df_og["TIP_NAME_STD"] = df_og[COL_OG_TIP_NAME].astype(str).str.upper().str.strip()
+        df_og["BBM_STD"] = df_og[COL_OG_BBM].astype(str).str.upper().str.strip()
         df_og[COL_OG_MOBILE] = df_og[COL_OG_MOBILE].apply(clean_mobile)
         df_og[COL_OG_AMOUNT] = pd.to_numeric(df_og[COL_OG_AMOUNT], errors="coerce").fillna(0)
-    else:
-        df_og["TIP_NAME_STD"] = []
-        df_og["BBM_STD"] = []
 
-    role = st.session_state.role
+    # ---------- BBM FILTER ----------
     bbm_filter = st.session_state.get("current_bbm", "").upper().strip()
+    role = st.session_state.role
 
     if role in ("TIP", "BBM") and bbm_filter:
         if not df_os.empty:
@@ -572,7 +563,6 @@ def preprocess(os_df, og_df):
 
     return df_os, df_og
 
-os_df, og_df = preprocess(os_df_raw, og_df_raw)
 
 # ----------------- TIP VIEW -----------------
 def tip_view():
@@ -975,3 +965,4 @@ elif st.session_state.role == "BBM":
     bbm_view()
 else:  # MGMT
     mgmt_view()
+

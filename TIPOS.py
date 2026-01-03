@@ -833,9 +833,9 @@ def bbm_view():
                 mobile = r[COL_OS_MOBILE]
                 amount = r[COL_OS_AMOUNT]
                 acc = str(r[COL_OS_BA])
+               ftth_no = str(r.get("FTTH_NO", "")).strip()
+               ftth_line = f"<br><b>FTTH No:</b> {ftth_no}" if ftth_no else ""
 
-                Telephone_Number = str(r.get("Telephone_Number", "")).strip()
-                ftth_line = f"<br><b>FTTH No:</b> {Telephone_Number}" if Telephone_Number else ""
 
                 last_call, last_wa = status_os.get(acc, ("", ""))
 
@@ -965,5 +965,6 @@ elif st.session_state.role == "BBM":
     bbm_view()
 else:  # MGMT
     mgmt_view()
+
 
 

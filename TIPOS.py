@@ -670,8 +670,9 @@ def tip_view():
                 amount = row[COL_OG_AMOUNT]
                 acc_no = str(row[COL_OG_BA])
 
-                Telephone_Number = str(row.get("Telephone_Number", "")).strip()
-                ftth_line = f"<br><b>FTTH No:</b> {Telephone_Number}" if Telephone_Number else ""
+              ftth_no = str(r.get("FTTH_NO", "")).strip()
+              ftth_line = f"<br><b>FTTH No:</b> {ftth_no}" if ftth_no else ""
+
 
                 last_call, last_wa = status_map_og.get(acc_no, ("", ""))
 
@@ -879,8 +880,9 @@ def bbm_view():
                 amount = r[COL_OG_AMOUNT]
                 acc = str(r[COL_OG_BA])
 
-                Telephone_Number = str(r.get("Telephone_Number", "")).strip()
-                ftth_line = f"<br><b>FTTH No:</b> {Telephone_Number}" if Telephone_Number else ""
+                ftth_no = str(r.get("FTTH_NO", "")).strip()
+                ftth_line = f"<br><b>FTTH No:</b> {ftth_no}" if ftth_no else ""
+
 
                 last_call, last_wa = status_og.get(acc, ("", ""))
 
@@ -966,6 +968,7 @@ elif st.session_state.role == "BBM":
     bbm_view()
 else:  # MGMT
     mgmt_view()
+
 
 
 

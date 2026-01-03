@@ -644,7 +644,7 @@ if ftth_no:
 
                 st.markdown(
                     f"<div style='background:{bg};padding:8px;border-radius:6px;'>"
-                    f"<b>{cust_name}</b> | Acc: {acc_no}<br>"
+                    f"<b>{cust_name}</b> | Acc: {acc_no} | Tel no :{ftth_no}<br>"
                     f"{addr}<br>"
                     f"OS: ₹{amount:,.2f}<br>"
                     f"{make_tel_link(mobile)}&nbsp;&nbsp;{make_whatsapp_link(mobile, f'Dear {cust_name}, your BSNL FTTH outstanding is Rs {amount:.2f}. Kindly pay immediately.')}"
@@ -978,6 +978,7 @@ elif st.session_state.role == "BBM":
     bbm_view()
 else:  # MGMT
     mgmt_view()
+
 
 
 

@@ -604,24 +604,27 @@ def tip_view():
 
             ftth_no = str(row.get("FTTH_NO", "")).strip()
             ftth_line = f"<br><b>FTTH No:</b> {ftth_no}" if ftth_no else ""
-
+            msg = (
+    f"Dear {cust_name}, your BSNL FTTH bill is overdue. Outstanding Rs {amount:.2f}. "
+    f"FTTH No: {ftth_no}. Kindly pay immediately."
+) if ftth_no else (
+    f"Dear {cust_name}, your BSNL FTTH bill is overdue. Outstanding Rs {amount:.2f}. Kindly pay immediately."
+)
+wa_link = make_whatsapp_link(mobile, msg)
             last_call, last_wa = status_map_os.get(acc_no, ("", ""))
             green = bool(last_call or last_wa)
             bg = "#d4ffd4" if green else "#fff7d4"
 
-            st.markdown(
-                f"<div style='background:{bg};padding:8px;border-radius:6px;'>"
-                f"<b>{cust_name}</b> | Acc: {acc_no}{ftth_line}<br>"
-                f"{addr}<br>"
-                f"OS: ₹{amount:,.2f}<br>"
-                ftth_no = str(row.get("FTTH_NO", "")).strip()
-                msg = f"Dear {cust_name}, your BSNL FTTH bill is overdue. Outstanding Rs {amount:.2f}. FTTH No: {ftth_no}. Kindly pay immediately." if ftth_no \
-                else f"Dear {cust_name}, your BSNL FTTH bill is overdue. Outstanding Rs {amount:.2f}. Kindly pay immediately."
-                wa_link = make_whatsapp_link(mobile, msg)
-                f"<br><small>Last Call: {last_call or '-'} | Last WA: {last_wa or '-'}</small>"
-                "</div>",
-                unsafe_allow_html=True,
-            )
+       st.markdown(
+    f"<div style='background:{bg};padding:8px;border-radius:6px;'>"
+    f"<b>{cust_name}</b> | Acc: {acc_no}{ftth_line}<br>"
+    f"{addr}<br>"
+    f"OS: ₹{amount:,.2f}<br>"
+    f"{make_tel_link(mobile)}&nbsp;&nbsp;{wa_link}"
+    f"<br><small>Last Call: {last_call or '-'} | Last WA: {last_wa or '-'}</small>"
+    "</div>",
+    unsafe_allow_html=True,
+)
 
             c1, c2 = st.columns(2)
             with c1:
@@ -701,6 +704,7 @@ elif st.session_state.role == "BBM":
     bbm_view()
 else:
     st.info("MGMT view not included in this patch snippet. Keep your existing MGMT view below if present.")
+
 
 
 

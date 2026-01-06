@@ -675,7 +675,7 @@ def bbm_view():
                 f"<b>{cust}</b> | Acc: {acc}{ftth_line}<br>{addr}<br>"
                 f"OS: ₹{amount:,.2f}<br>"
                 f"{make_tel_link(mobile)} "
-                f"{make_whatsapp_link(mobile, f'Dear {cust}, Your BSNL FTTH {ftth_line} outstanding is Rs {amount:.2f}. Please pay immediately.')}"
+                f"{make_whatsapp_link(mobile, f'Dear {cust}, Your BSNL FTTH ftth_line outstanding is Rs {amount:.2f}. Please pay immediately.')}"
                 f"<br><small>Call: {last_call or '-'} | WA: {last_wa or '-'}</small>"
                 f"</div>",
                 unsafe_allow_html=True
@@ -698,5 +698,6 @@ elif st.session_state.role == "BBM":
     bbm_view()
 else:
     st.info("MGMT view not included in this patch snippet. Keep your existing MGMT view below if present.")
+
 
 

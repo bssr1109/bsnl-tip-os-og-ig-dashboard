@@ -614,7 +614,10 @@ def tip_view():
                 f"<b>{cust_name}</b> | Acc: {acc_no}{ftth_line}<br>"
                 f"{addr}<br>"
                 f"OS: ₹{amount:,.2f}<br>"
-                f"{make_tel_link(mobile)}&nbsp;&nbsp;{make_whatsapp_link(mobile, f'Dear {cust_name}, your BSNL FTTH ftth_line outstanding is Rs {amount:.2f}. Kindly pay immediately.')}"
+                ftth_no = str(row.get("FTTH_NO", "")).strip()
+                msg = f"Dear {cust_name}, your BSNL FTTH bill is overdue. Outstanding Rs {amount:.2f}. FTTH No: {ftth_no}. Kindly pay immediately." if ftth_no \
+                else f"Dear {cust_name}, your BSNL FTTH bill is overdue. Outstanding Rs {amount:.2f}. Kindly pay immediately."
+                wa_link = make_whatsapp_link(mobile, msg)
                 f"<br><small>Last Call: {last_call or '-'} | Last WA: {last_wa or '-'}</small>"
                 "</div>",
                 unsafe_allow_html=True,
@@ -698,6 +701,7 @@ elif st.session_state.role == "BBM":
     bbm_view()
 else:
     st.info("MGMT view not included in this patch snippet. Keep your existing MGMT view below if present.")
+
 
 
 

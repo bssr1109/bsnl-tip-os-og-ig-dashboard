@@ -107,9 +107,11 @@ def _safe_sheet_name(name: str, fallback: str = "Sheet1") -> str:
     except Exception:
         s = ""
     s = s.strip() or fallback
+
     # Replace invalid characters
-    for ch in [":", "\\", "/", "?", "*", "[", "]"]:
+    for ch in [":", "\", "/", "?", "*", "[", "]"]:
         s = s.replace(ch, "-")
+
     # Trim to 31 chars
     s = s[:31]
     return s or fallback
@@ -698,35 +700,39 @@ def bbm_view():
         st.info("No customer records for this BBM.")
         return
 
-    tip_list = sorted(pd.concat([os_df["TIP_NAME_STD"], og_df["TIP_NAME_STD"]]).dropna().unique())
+    tip_list = sorted(
+        pd.concat([os_df["TIP_NAME_STD"], og_df["TIP_NAME_STD"]])
+        .dropna()
+        .unique()
+    )
     selected_tip = st.selectbox("Select TIP", tip_list)
 
+    # -------- TIP-wise Outstanding Summary (OS only) --------
     st.markdown("#### 📊 TIP-wise Outstanding Summary")
 
-# Build TIP-wise summary (OS only for this BBM)
-if not os_df.empty:
-    summary = (
-        os_df.groupby("TIP_NAME_STD", dropna=False)
-        .agg(
-            TOTAL_CUSTOMERS=(COL_OS_BA, "count"),
-            TOTAL_OUTSTANDING=(COL_OS_AMOUNT, "sum"),
+    if not os_df.empty:
+        summary = (
+            os_df.groupby("TIP_NAME_STD", dropna=False)
+            .agg(
+                TOTAL_CUSTOMERS=(COL_OS_BA, "count"),
+                TOTAL_OUTSTANDING=(COL_OS_AMOUNT, "sum"),
+            )
+            .reset_index()
+            .sort_values("TOTAL_OUTSTANDING", ascending=False)
         )
-        .reset_index()
-        .sort_values("TOTAL_OUTSTANDING", ascending=False)
-    )
 
-    # Format for display
-    summary["TOTAL_OUTSTANDING"] = summary["TOTAL_OUTSTANDING"].map(lambda x: f"₹{x:,.2f}")
+        summary_display = summary.copy()
+        summary_display["TOTAL_OUTSTANDING"] = summary_display["TOTAL_OUTSTANDING"].map(
+            lambda x: f"₹{x:,.2f}"
+        )
 
-    st.dataframe(
-        summary,
-        use_container_width=True,
-        hide_index=True,
-    )
-else:
-    st.info("No OS data available to build TIP-wise summary.")
+        st.dataframe(summary_display, use_container_width=True, hide_index=True)
+    else:
+        st.info("No OS data available to build TIP-wise summary.")
 
-st.markdown("---")
+    st.markdown("---")
+
+    # -------- Disconnected (OS) Customers for selected TIP --------
     st.markdown("#### 📴 Disconnected (OS) Customers")
 
     tip_os = os_df[os_df["TIP_NAME_STD"] == selected_tip]
@@ -747,8 +753,7 @@ st.markdown("---")
         ftth_line = f"<br><b>FTTH No:</b> {ftth_no}" if ftth_no else ""
 
         last_call, last_wa = status_os.get(acc, ("", ""))
-        green = bool(last_call or last_wa)
-        bg = "#d4ffd4" if green else "#fff7d4"
+        bg = "#d4ffd4" if (last_call or last_wa) else "#fff7d4"
 
         wa_msg = build_wa_message(cust, amount, acc, ftth_no)
 
@@ -773,6 +778,7 @@ st.markdown("---")
                 update_status(selected_tip, "OS", acc, update_whatsapp=True)
                 st.rerun()
 
+
 # ----------------- MAIN ROLE SWITCH -----------------
 if st.session_state.role == "TIP":
     tip_view()
@@ -780,4 +786,3 @@ elif st.session_state.role == "BBM":
     bbm_view()
 else:
     st.info("MGMT view not included in this patch snippet. Keep your existing MGMT view below if present.")
-

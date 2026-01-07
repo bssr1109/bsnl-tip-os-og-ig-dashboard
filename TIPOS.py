@@ -101,14 +101,14 @@ st.title("📊 TIP Outstanding & OG/IC Barred Dashboard")
 
 # ----------------- COMMON HELPERS -----------------
 def _safe_sheet_name(name: str, fallback: str = "Sheet1") -> str:
-    """Excel sheet names: max 31 chars and cannot contain: : \\ / ? * [ ]"""
+    """Excel sheet names: max 31 chars and cannot contain: : \ / ? * [ ]"""
     try:
         s = str(name) if name is not None else ""
     except Exception:
         s = ""
     s = s.strip() or fallback
     # Replace invalid characters
-    for ch in [":", "\\", "/", "?", "*", "[", "]"]:
+    for ch in [":", "\", "/", "?", "*", "[", "]"]:
         s = s.replace(ch, "-")
     # Trim to 31 chars
     s = s[:31]
@@ -117,7 +117,9 @@ def _safe_sheet_name(name: str, fallback: str = "Sheet1") -> str:
 
 def df_to_excel_bytes(df, sheet_name="Sheet1"):
     buffer = io.BytesIO()
-    excel(writer, index=False, sheet_name=safe_name)
+    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        safe_name = _safe_sheet_name(sheet_name)
+        df.to_excel(writer, index=False, sheet_name=safe_name)
     buffer.seek(0)
     return buffer.getvalue()
 
@@ -699,54 +701,32 @@ def bbm_view():
     tip_list = sorted(pd.concat([os_df["TIP_NAME_STD"], og_df["TIP_NAME_STD"]]).dropna().unique())
     selected_tip = st.selectbox("Select TIP", tip_list)
 
-    st.markdown("#### 🚀 Bulk WhatsApp (Selected TIP)")
+    st.markdown("#### 📊 TIP-wise Outstanding Summary")
 
-    tip_os_bulk = os_df[os_df["TIP_NAME_STD"] == selected_tip].copy()
-    bulk_rows = []
-
-    if not tip_os_bulk.empty:
-        for _, r in tip_os_bulk.iterrows():
-            cust = str(r.get(COL_OS_CUST_NAME, ""))
-            acc = str(r.get(COL_OS_BA, "")).strip()
-            mobile = str(r.get(COL_OS_MOBILE, "")).strip()
-            amount = float(r.get(COL_OS_AMOUNT, 0) or 0)
-            ftth_no = str(r.get("FTTH_NO", "")).strip()
-
-            if not mobile:
-                continue
-
-            msg = build_wa_message(cust, amount, acc, ftth_no)
-            wa_url = f"https://wa.me/{mobile}?text={quote(msg)}"
-
-            bulk_rows.append({
-                "Customer": cust,
-                "Account No": acc,
-                "FTTH No": ftth_no,
-                "Mobile": mobile,
-                "Outstanding": amount,
-                "WhatsApp URL": wa_url,
-            })
-
-    bulk_df = pd.DataFrame(bulk_rows)
-
-    if bulk_df.empty:
-        st.info("No valid mobile numbers found for bulk WhatsApp.")
-    else:
-        st.write(f"Total messages ready: **{len(bulk_df)}**")
-
-        xls_bytes = df_to_excel_bytes(bulk_df, sheet_name=f"{selected_tip}_WA")
-        st.download_button(
-            "⬇️ Downloaame=f"WA_Links_{selected_tip}_{CURRENT_MONTH}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+# Build TIP-wise summary (OS only for this BBM)
+if not os_df.empty:
+    summary = (
+        os_df.groupby("TIP_NAME_STD", dropna=False)
+        .agg(
+            TOTAL_CUSTOMERS=(COL_OS_BA, "count"),
+            TOTAL_OUTSTANDING=(COL_OS_AMOUNT, "sum"),
         )
+        .reset_index()
+        .sort_values("TOTAL_OUTSTANDING", ascending=False)
+    )
 
-        st.caption("Quick send (click). For full list, use the Excel download.")
-        for i, rr in bulk_df.head(50).iterrows():
-            st.markdown(f"- [{rr['Customer']} | Acc {rr['Account No']}]({rr['WhatsApp URL']})")
-        if len(bulk_df) > 50:
-            st.info("Showing first 50 links. Download Excel for full list.")
+    # Format for display
+    summary["TOTAL_OUTSTANDING"] = summary["TOTAL_OUTSTANDING"].map(lambda x: f"₹{x:,.2f}")
 
-    st.markdown("---")
+    st.dataframe(
+        summary,
+        use_container_width=True,
+        hide_index=True,
+    )
+else:
+    st.info("No OS data available to build TIP-wise summary.")
+
+st.markdown("---")
     st.markdown("#### 📴 Disconnected (OS) Customers")
 
     tip_os = os_df[os_df["TIP_NAME_STD"] == selected_tip]

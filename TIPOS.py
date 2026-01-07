@@ -109,7 +109,7 @@ def _safe_sheet_name(name: str, fallback: str = "Sheet1") -> str:
     s = s.strip() or fallback
 
     # Replace invalid characters (NOTE: backslash must be written as \ in Python)
-    for ch in [":", "\", "/", "?", "*", "[", "]"]:
+    for ch in [":", "\", "\", "?", "*", "[", "]"]:
         s = s.replace(ch, "-")
 
     # Trim to 31 chars
@@ -786,3 +786,4 @@ elif st.session_state.role == "BBM":
     bbm_view()
 else:
     st.info("MGMT view not included in this patch snippet. Keep your existing MGMT view below if present.")
+

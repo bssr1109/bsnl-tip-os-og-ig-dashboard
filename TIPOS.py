@@ -100,10 +100,24 @@ init_session()
 st.title("📊 TIP Outstanding & OG/IC Barred Dashboard")
 
 # ----------------- COMMON HELPERS -----------------
+def _safe_sheet_name(name: str, fallback: str = "Sheet1") -> str:
+    """Excel sheet names: max 31 chars and cannot contain: : \\ / ? * [ ]"""
+    try:
+        s = str(name) if name is not None else ""
+    except Exception:
+        s = ""
+    s = s.strip() or fallback
+    # Replace invalid characters
+    for ch in [":", "\\", "/", "?", "*", "[", "]"]:
+        s = s.replace(ch, "-")
+    # Trim to 31 chars
+    s = s[:31]
+    return s or fallback
+
+
 def df_to_excel_bytes(df, sheet_name="Sheet1"):
     buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-        df.to_excel(writer, index=False, sheet_name=sheet_name)
+    excel(writer, index=False, sheet_name=safe_name)
     buffer.seek(0)
     return buffer.getvalue()
 
@@ -722,9 +736,7 @@ def bbm_view():
 
         xls_bytes = df_to_excel_bytes(bulk_df, sheet_name=f"{selected_tip}_WA")
         st.download_button(
-            "⬇️ Download WhatsApp Links Excel",
-            data=xls_bytes,
-            file_name=f"WA_Links_{selected_tip}_{CURRENT_MONTH}.xlsx",
+            "⬇️ Downloaame=f"WA_Links_{selected_tip}_{CURRENT_MONTH}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 

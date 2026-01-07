@@ -108,7 +108,7 @@ def _safe_sheet_name(name: str, fallback: str = "Sheet1") -> str:
         s = ""
     s = s.strip() or fallback
 
-    # Replace invalid characters
+    # Replace invalid characters (NOTE: backslash must be written as \ in Python)
     for ch in [":", "\", "/", "?", "*", "[", "]"]:
         s = s.replace(ch, "-")
 

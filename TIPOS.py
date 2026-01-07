@@ -16,6 +16,12 @@ STATUS_FILE = "tip_contact_status.xlsx"   # TIP call / WhatsApp log (month-wise 
 UPLOAD_LOG_FILE = "bbm_upload_log.xlsx"   # BBM file upload log
 CURRENT_MONTH = datetime.now().strftime("%Y-%m")  # e.g. 2025-12
 
+# ----------------- PAYMENT LINK CONFIG -----------------
+# Official portal (keep as default)
+PAY_LINK_LONG = "https://portal.bsnl.in/myportal/cfa.do"
+# OPTIONAL: if you have an approved short link, paste it here (else leave empty)
+PAY_LINK_SHORT = ""  # e.g. "https://bsnl.in/pay"
+
 # ----------------- LOAD LOGIN JSONS -----------------
 MGMT_PASSWORD = ""
 BBM_USERS = {}
@@ -58,7 +64,6 @@ FTTH_CANDIDATES = [
     "LL NUMBER", "LL_NUMBER", "LL NO", "LL_NO",
     "CLI", "UID", "CUSTOMER ID", "CUSTOMER_ID", "USER ID", "USER_ID"
 ]
-
 
 # Barred Customer List (OGB_ICB_02.11.2025.xlsx → OG IC Barred List)
 COL_OG_TIP_NAME = "Maintenance Fanchisee Name"
@@ -112,14 +117,45 @@ def make_whatsapp_link(mobile, message):
         return ""
     return f'<a href="https://wa.me/{mobile}?text={quote(message)}" target="_blank">🟢 WhatsApp</a>'
 
+def get_pay_link():
+    s = str(PAY_LINK_SHORT).strip()
+    return s if s else PAY_LINK_LONG
+
+def build_wa_message(cust_name, amount, acc_no, ftth_no=""):
+    """Bilingual WhatsApp message: English + Telugu + Hindi. Includes Account No and optional FTTH No."""
+    link = get_pay_link()
+    cust_name = str(cust_name).strip() if cust_name is not None else "Customer"
+    acc_no = str(acc_no).strip() if acc_no is not None else ""
+    ftth_no = str(ftth_no).strip() if ftth_no is not None else ""
+
+    ftth_line_en = f"FTTH No: {ftth_no}\n" if ftth_no else ""
+    ftth_line_te = f"FTTH నెం: {ftth_no}\n" if ftth_no else ""
+    ftth_line_hi = f"FTTH नं: {ftth_no}\n" if ftth_no else ""
+
+    msg = (
+        f"Dear {cust_name}, your BSNL FTTH bill is overdue.\n"
+        f"Account No: {acc_no}\n"
+        f"{ftth_line_en}"
+        f"Outstanding Rs {float(amount):.2f}.\n"
+        f"Pay online: {link}\n\n"
+        f"తెలుగు: ప్రియమైన {cust_name}, మీ BSNL FTTH బిల్లు బాకీగా ఉంది.\n"
+        f"అకౌంట్ నెం: {acc_no}\n"
+        f"{ftth_line_te}"
+        f"బాకీ మొత్తం రూ {float(amount):.2f}.\n"
+        f"ఆన్‌లైన్ చెల్లింపు: {link}\n\n"
+        f"हिंदी: प्रिय {cust_name}, आपका BSNL FTTH बिल बकाया है।\n"
+        f"Account No: {acc_no}\n"
+        f"{ftth_line_hi}"
+        f"बकाया राशि Rs {float(amount):.2f}।\n"
+        f"Online payment: {link}"
+    )
+    return msg
+
 # ----------------- STATUS: LOAD / SAVE (MONTH-WISE SHEETS) -----------------
 STATUS_COLS = [
     "TIP_NAME_STD", "BBM_STD", "SOURCE: OS/OG", "ACCOUNT_NO",
     "LAST_CALL_TIME", "LAST_WHATSAPP_TIME", "MONTH"
 ]
-
-# NOTE: Keeping your original status file format usage below.
-# If your existing file uses SOURCE without ": OS/OG", change back accordingly.
 
 def load_status_all():
     if st.session_state.status_sheets is not None:
@@ -226,6 +262,7 @@ def get_status_map(tip_name, source, month_str=None):
         (df["BBM_STD"] == bbm_name) &
         (df["SOURCE: OS/OG"] == source.upper())
     ]
+
     m = {}
     for _, row in sub.iterrows():
         acc = str(row["ACCOUNT_NO"])
@@ -236,8 +273,7 @@ def get_status_map(tip_name, source, month_str=None):
 def load_upload_log():
     if os.path.exists(UPLOAD_LOG_FILE):
         return pd.read_excel(UPLOAD_LOG_FILE, dtype=str)
-    else:
-        return pd.DataFrame(columns=["BBM_STD", "FILE_TYPE", "FILENAME", "UPLOADED_AT", "MONTH"])
+    return pd.DataFrame(columns=["BBM_STD", "FILE_TYPE", "FILENAME", "UPLOADED_AT", "MONTH"])
 
 def log_upload(bbm_name, file_type, filename):
     bbm_std = str(bbm_name).upper().strip()
@@ -293,9 +329,7 @@ def login_form():
                     key="tip_bbm",
                 )
             else:
-                bbm_for_tip = st.text_input(
-                    "BBM Name (for filtering)", key="tip_bbm_text"
-                )
+                bbm_for_tip = st.text_input("BBM Name (for filtering)", key="tip_bbm_text")
 
             pwd_label = "Enter TIP Login Code (as per tip_users.json)"
 
@@ -321,7 +355,7 @@ def login_form():
         if not submitted:
             return
 
-        u = username.strip()
+        u = str(username).strip()
         if not u:
             st.error("❌ Please select / enter User ID")
             return
@@ -496,13 +530,13 @@ if os_df_raw is None and og_df_raw is None and st.session_state.role in ("TIP", 
 
 # ----------------- PREPROCESS -----------------
 def find_ftth_column(df):
-        """Return the actual column name for FTTH/service number if present, else None."""
-        cols = {str(c).strip().upper(): c for c in df.columns}
-        for cand in FTTH_CANDIDATES:
-            cand_u = str(cand).strip().upper()
-            if cand_u in cols:
-                return cols[cand_u]
-        return None
+    """Return the actual column name for FTTH/service number if present, else None."""
+    cols = {str(c).strip().upper(): c for c in df.columns}
+    for cand in FTTH_CANDIDATES:
+        cand_u = str(cand).strip().upper()
+        if cand_u in cols:
+            return cols[cand_u]
+    return None
 
 
 def preprocess(os_df, og_df):
@@ -604,27 +638,24 @@ def tip_view():
 
             ftth_no = str(row.get("FTTH_NO", "")).strip()
             ftth_line = f"<br><b>FTTH No:</b> {ftth_no}" if ftth_no else ""
-            msg = (
-    f"Dear {cust_name}, your BSNL FTTH bill is overdue. Outstanding Rs {amount:.2f}. "
-    f"FTTH No: {ftth_no}. Kindly pay immediately."
-) if ftth_no else (
-    f"Dear {cust_name}, your BSNL FTTH bill is overdue. Outstanding Rs {amount:.2f}. Kindly pay immediately."
-)
-wa_link = make_whatsapp_link(mobile, msg)
+
+            msg = build_wa_message(cust_name, amount, acc_no, ftth_no)
+            wa_link = make_whatsapp_link(mobile, msg)
+
             last_call, last_wa = status_map_os.get(acc_no, ("", ""))
             green = bool(last_call or last_wa)
             bg = "#d4ffd4" if green else "#fff7d4"
 
-       st.markdown(
-    f"<div style='background:{bg};padding:8px;border-radius:6px;'>"
-    f"<b>{cust_name}</b> | Acc: {acc_no}{ftth_line}<br>"
-    f"{addr}<br>"
-    f"OS: ₹{amount:,.2f}<br>"
-    f"{make_tel_link(mobile)}&nbsp;&nbsp;{wa_link}"
-    f"<br><small>Last Call: {last_call or '-'} | Last WA: {last_wa or '-'}</small>"
-    "</div>",
-    unsafe_allow_html=True,
-)
+            st.markdown(
+                f"<div style='background:{bg};padding:8px;border-radius:6px;'>"
+                f"<b>{cust_name}</b> | Acc: {acc_no}{ftth_line}<br>"
+                f"{addr}<br>"
+                f"OS: ₹{amount:,.2f}<br>"
+                f"{make_tel_link(mobile)}&nbsp;&nbsp;{wa_link}"
+                f"<br><small>Last Call: {last_call or '-'} | Last WA: {last_wa or '-'}</small>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
 
             c1, c2 = st.columns(2)
             with c1:
@@ -654,48 +685,101 @@ def bbm_view():
     tip_list = sorted(pd.concat([os_df["TIP_NAME_STD"], og_df["TIP_NAME_STD"]]).dropna().unique())
     selected_tip = st.selectbox("Select TIP", tip_list)
 
+    st.markdown("#### 🚀 Bulk WhatsApp (Selected TIP)")
+
+    tip_os_bulk = os_df[os_df["TIP_NAME_STD"] == selected_tip].copy()
+    bulk_rows = []
+
+    if not tip_os_bulk.empty:
+        for _, r in tip_os_bulk.iterrows():
+            cust = str(r.get(COL_OS_CUST_NAME, ""))
+            acc = str(r.get(COL_OS_BA, "")).strip()
+            mobile = str(r.get(COL_OS_MOBILE, "")).strip()
+            amount = float(r.get(COL_OS_AMOUNT, 0) or 0)
+            ftth_no = str(r.get("FTTH_NO", "")).strip()
+
+            if not mobile:
+                continue
+
+            msg = build_wa_message(cust, amount, acc, ftth_no)
+            wa_url = f"https://wa.me/{mobile}?text={quote(msg)}"
+
+            bulk_rows.append({
+                "Customer": cust,
+                "Account No": acc,
+                "FTTH No": ftth_no,
+                "Mobile": mobile,
+                "Outstanding": amount,
+                "WhatsApp URL": wa_url,
+            })
+
+    bulk_df = pd.DataFrame(bulk_rows)
+
+    if bulk_df.empty:
+        st.info("No valid mobile numbers found for bulk WhatsApp.")
+    else:
+        st.write(f"Total messages ready: **{len(bulk_df)}**")
+
+        xls_bytes = df_to_excel_bytes(bulk_df, sheet_name=f"{selected_tip}_WA")
+        st.download_button(
+            "⬇️ Download WhatsApp Links Excel",
+            data=xls_bytes,
+            file_name=f"WA_Links_{selected_tip}_{CURRENT_MONTH}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        st.caption("Quick send (click). For full list, use the Excel download.")
+        for i, rr in bulk_df.head(50).iterrows():
+            st.markdown(f"- [{rr['Customer']} | Acc {rr['Account No']}]({rr['WhatsApp URL']})")
+        if len(bulk_df) > 50:
+            st.info("Showing first 50 links. Download Excel for full list.")
+
+    st.markdown("---")
     st.markdown("#### 📴 Disconnected (OS) Customers")
+
     tip_os = os_df[os_df["TIP_NAME_STD"] == selected_tip]
     status_os = get_status_map(selected_tip, "OS")
 
     if tip_os.empty:
         st.info("No OS customers.")
-    else:
-        for idx, r in tip_os.iterrows():
-            cust = r[COL_OS_CUST_NAME]
-            addr = r[COL_OS_ADDR]
-            mobile = r[COL_OS_MOBILE]
-            amount = r[COL_OS_AMOUNT]
-            acc = str(r[COL_OS_BA])
+        return
 
-            ftth_no = str(r.get("FTTH_NO", "")).strip()
-            ftth_line = f"<br><b>FTTH No:</b> {ftth_no}" if ftth_no else ""
+    for idx, r in tip_os.iterrows():
+        cust = r[COL_OS_CUST_NAME]
+        addr = r[COL_OS_ADDR]
+        mobile = r[COL_OS_MOBILE]
+        amount = r[COL_OS_AMOUNT]
+        acc = str(r[COL_OS_BA])
 
-            last_call, last_wa = status_os.get(acc, ("", ""))
+        ftth_no = str(r.get("FTTH_NO", "")).strip()
+        ftth_line = f"<br><b>FTTH No:</b> {ftth_no}" if ftth_no else ""
 
-            green = bool(last_call or last_wa)
-            bg = "#d4ffd4" if green else "#fff7d4"
+        last_call, last_wa = status_os.get(acc, ("", ""))
+        green = bool(last_call or last_wa)
+        bg = "#d4ffd4" if green else "#fff7d4"
 
-            st.markdown(
-                f"<div style='background:{bg};padding:8px;border-radius:6px;'>"
-                f"<b>{cust}</b> | Acc: {acc}{ftth_line}<br>{addr}<br>"
-                f"OS: ₹{amount:,.2f}<br>"
-                f"{make_tel_link(mobile)} "
-                f"{make_whatsapp_link(mobile, f'Dear {cust}, Your BSNL FTTH ftth_line outstanding is Rs {amount:.2f}. Please pay immediately.')}"
-                f"<br><small>Call: {last_call or '-'} | WA: {last_wa or '-'}</small>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
+        wa_msg = build_wa_message(cust, amount, acc, ftth_no)
 
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("📞 Call Done", key=f"bbm_os_call_{selected_tip}_{idx}"):
-                    update_status(selected_tip, "OS", acc, update_call=True)
-                    st.rerun()
-            with c2:
-                if st.button("🟢 WA Sent", key=f"bbm_os_wa_{selected_tip}_{idx}"):
-                    update_status(selected_tip, "OS", acc, update_whatsapp=True)
-                    st.rerun()
+        st.markdown(
+            f"<div style='background:{bg};padding:8px;border-radius:6px;'>"
+            f"<b>{cust}</b> | Acc: {acc}{ftth_line}<br>{addr}<br>"
+            f"OS: ₹{amount:,.2f}<br>"
+            f"{make_tel_link(mobile)} "
+            f"{make_whatsapp_link(mobile, wa_msg)}"
+            f"<br><small>Call: {last_call or '-'} | WA: {last_wa or '-'}</small>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("📞 Call Done", key=f"bbm_os_call_{selected_tip}_{idx}"):
+                update_status(selected_tip, "OS", acc, update_call=True)
+                st.rerun()
+        with c2:
+            if st.button("🟢 WA Sent", key=f"bbm_os_wa_{selected_tip}_{idx}"):
+                update_status(selected_tip, "OS", acc, update_whatsapp=True)
+                st.rerun()
 
 # ----------------- MAIN ROLE SWITCH -----------------
 if st.session_state.role == "TIP":
@@ -704,9 +788,3 @@ elif st.session_state.role == "BBM":
     bbm_view()
 else:
     st.info("MGMT view not included in this patch snippet. Keep your existing MGMT view below if present.")
-
-
-
-
-
-
